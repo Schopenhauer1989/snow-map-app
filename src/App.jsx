@@ -33,6 +33,20 @@ const statusStyles = {
   },
 }
 
+const mapStatusStyles = {
+  cleared: statusStyles.cleared,
+  caution: statusStyles.caution,
+  blocked: statusStyles.blocked,
+}
+
+const mapStatusByReportStatus = {
+  cleared: 'cleared',
+  caution: 'caution',
+  icy: 'caution',
+  blocked: 'blocked',
+  heavy_snow: 'blocked',
+}
+
 const targetLabels = {
   car: '車',
   pedestrian: '歩行者',
@@ -40,6 +54,12 @@ const targetLabels = {
 }
 
 const targetOptions = ['pedestrian', 'car', 'both']
+
+const targetIcons = {
+  pedestrian: '人',
+  car: '車',
+  both: '両',
+}
 
 const snowReports = [
   {
@@ -136,8 +156,10 @@ const formatTokyoIso = (date = new Date()) => {
   return `${tokyoTime.toISOString().slice(0, 19)}+09:00`
 }
 
+const getMapStatus = (status) => mapStatusByReportStatus[status] ?? 'caution'
+
 const createStatusIcon = (status) => {
-  const { color, label } = statusStyles[status]
+  const { color, label } = mapStatusStyles[status]
 
   return L.divIcon({
     className: 'snow-marker',
@@ -290,7 +312,7 @@ function App() {
         </div>
 
         <ul className="status-legend" aria-label="除雪状態の凡例">
-          {Object.entries(statusStyles).map(([status, style]) => (
+          {Object.entries(mapStatusStyles).map(([status, style]) => (
             <li key={status}>
               <span
                 className="legend-dot"
@@ -316,33 +338,48 @@ function App() {
           </p>
 
           <form className="report-form" onSubmit={handleSubmit}>
-            <label>
-              状態
-              <select
-                value={status}
-                onChange={(event) => setStatus(event.target.value)}
-              >
+            <fieldset>
+              <legend>状態</legend>
+              <div className="option-grid status-option-grid">
                 {Object.entries(statusStyles).map(([statusValue, style]) => (
-                  <option key={statusValue} value={statusValue}>
-                    {style.label}
-                  </option>
+                  <button
+                    className={`option-button ${
+                      status === statusValue ? 'is-selected' : ''
+                    }`}
+                    key={statusValue}
+                    type="button"
+                    aria-pressed={status === statusValue}
+                    style={{ '--option-color': style.color }}
+                    onClick={() => setStatus(statusValue)}
+                  >
+                    <span className="option-icon" aria-hidden="true" />
+                    <span>{style.label}</span>
+                  </button>
                 ))}
-              </select>
-            </label>
+              </div>
+            </fieldset>
 
-            <label>
-              対象
-              <select
-                value={target}
-                onChange={(event) => setTarget(event.target.value)}
-              >
+            <fieldset>
+              <legend>対象</legend>
+              <div className="option-grid target-option-grid">
                 {targetOptions.map((targetValue) => (
-                  <option key={targetValue} value={targetValue}>
-                    {targetLabels[targetValue]}
-                  </option>
+                  <button
+                    className={`option-button target-option ${
+                      target === targetValue ? 'is-selected' : ''
+                    }`}
+                    key={targetValue}
+                    type="button"
+                    aria-pressed={target === targetValue}
+                    onClick={() => setTarget(targetValue)}
+                  >
+                    <span className="target-icon" aria-hidden="true">
+                      {targetIcons[targetValue]}
+                    </span>
+                    <span>{targetLabels[targetValue]}</span>
+                  </button>
                 ))}
-              </select>
-            </label>
+              </div>
+            </fieldset>
 
             <label>
               タイトル
@@ -409,7 +446,7 @@ function App() {
               <Marker
                 key={report.id}
                 position={[report.lat, report.lng]}
-                icon={createStatusIcon(report.status)}
+                icon={createStatusIcon(getMapStatus(report.status))}
               >
                 <Popup>
                   <article className="report-popup">
@@ -417,10 +454,10 @@ function App() {
                       className="popup-status"
                       style={{
                         '--popup-status-color':
-                          statusStyles[report.status].color,
+                          mapStatusStyles[getMapStatus(report.status)].color,
                       }}
                     >
-                      {statusStyles[report.status].label}
+                      {mapStatusStyles[getMapStatus(report.status)].label}
                     </span>
                     <h2>{report.title}</h2>
                     <p>{report.comment}</p>
@@ -431,6 +468,10 @@ function App() {
                           <dd>{report.area}</dd>
                         </div>
                       )}
+                      <div>
+                        <dt>詳細理由</dt>
+                        <dd>{statusStyles[report.status].label}</dd>
+                      </div>
                       <div>
                         <dt>対象</dt>
                         <dd>{targetLabels[report.target]}</dd>

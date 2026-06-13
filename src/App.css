@@ -106,8 +106,23 @@
   font-weight: 700;
 }
 
+.report-form fieldset {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.report-form legend {
+  margin: 0 0 6px;
+  padding: 0;
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 700;
+}
+
 .report-form input,
-.report-form select,
 .report-form textarea {
   width: 100%;
   border: 1px solid var(--border);
@@ -117,8 +132,7 @@
   font: inherit;
 }
 
-.report-form input,
-.report-form select {
+.report-form input {
   height: 42px;
   padding: 0 10px;
 }
@@ -130,10 +144,85 @@
 }
 
 .report-form input:focus,
-.report-form select:focus,
 .report-form textarea:focus {
   outline: 3px solid rgba(29, 126, 208, 0.2);
   border-color: #1d7ed0;
+}
+
+.option-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.status-option-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.target-option-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.option-button {
+  display: flex;
+  min-height: 44px;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.option-button:hover {
+  border-color: color-mix(in srgb, var(--option-color, #1d7ed0) 45%, var(--border));
+  background: color-mix(in srgb, var(--option-color, #1d7ed0) 8%, #fff);
+}
+
+.option-button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--option-color, #1d7ed0) 22%, transparent);
+  outline-offset: 2px;
+}
+
+.option-button.is-selected {
+  border-color: var(--option-color, #1d7ed0);
+  background: color-mix(in srgb, var(--option-color, #1d7ed0) 12%, #fff);
+  box-shadow: inset 0 0 0 1px var(--option-color, #1d7ed0);
+}
+
+.option-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: var(--option-color);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--option-color) 20%, transparent);
+}
+
+.target-icon {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #1d7ed0;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.target-option {
+  --option-color: #1d7ed0;
+  justify-content: center;
 }
 
 .form-actions {
@@ -141,7 +230,7 @@
   gap: 10px;
 }
 
-.report-form button {
+.form-actions button {
   height: 44px;
   border: 0;
   border-radius: 8px;
@@ -152,18 +241,18 @@
   cursor: pointer;
 }
 
-.report-form button:disabled {
+.form-actions button:disabled {
   background: #94a3b8;
   cursor: not-allowed;
 }
 
-.report-form .secondary-button {
+.form-actions .secondary-button {
   border: 1px solid var(--border);
   background: #fff;
   color: var(--text-strong);
 }
 
-.report-form .secondary-button:hover {
+.form-actions .secondary-button:hover {
   background: #f8fafc;
 }
 
@@ -328,6 +417,10 @@
 
   .content-grid {
     grid-template-columns: 1fr;
+  }
+
+  .target-option-grid {
+    grid-template-columns: repeat(3, minmax(80px, 1fr));
   }
 
   .map-panel,
