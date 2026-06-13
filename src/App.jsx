@@ -44,6 +44,17 @@ const statusStyles = {
   },
 }
 
+const facilityStatusStyles = {
+  normal: {
+    color: '#1dd02f',
+    label: '通常営業',
+  },
+  changed: {
+    color: '#f59e0b',
+    label: '営業情報変更あり',
+  },
+}
+
 const mapStatusStyles = {
   cleared: statusStyles.cleared,
   caution: statusStyles.caution,
@@ -189,8 +200,25 @@ const selectedPositionIcon = L.divIcon({
   popupAnchor: [0, -18],
 })
 
+const createFacilityStatusIcon = (status) => {
+  const { color } = facilityStatusStyles[status]
+
+  const houseSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="${color}" stroke="white" stroke-width="1.5" width="28" height="28"><path d="M3 10L12 3L21 10V19C21 20.1046 20.1046 21 19 21H5C3.89543 21 3 20.1046 3 19V10Z" /><path d="M9 21V15H15V21" /></svg>`
+
+  return L.divIcon({
+    className: 'facility-marker',
+    html: `<div style="filter: drop-shadow(0 2px 3px rgba(0,0,0,0.3))">${houseSvg}</div>`,
+    iconSize: [32, 32],
+    iconAnchor: [16, 28],
+    popupAnchor: [0, -28],
+  })
+}
+
 const reportsCollection = collection(db, 'snowReports')
 const reportsQuery = query(reportsCollection, orderBy('updatedAt', 'desc'))
+
+const facilityCollection = collection(db, 'facilityReports')
+const facilityQuery = query(facilityCollection, orderBy('updatedAt', 'desc'))
 
 function MapClickHandler({ onSelect }) {
   useMapEvents({
@@ -205,23 +233,58 @@ function MapClickHandler({ onSelect }) {
   return null
 }
 
+function MapFilterButtons({ filterType, onFilterChange }) {
+  return (
+    <div className="map-filter-container">
+      <button
+        className={`map-filter-button ${filterType === 'snow' ? 'is-active' : ''}`}
+        onClick={() => onFilterChange('snow')}
+      >
+        🛣️ 除雪情報
+      </button>
+      <button
+        className={`map-filter-button ${filterType === 'facility' ? 'is-active' : ''}`}
+        onClick={() => onFilterChange('facility')}
+      >
+        🏠 施設情報
+      </button>
+      <button
+        className={`map-filter-button ${filterType === 'all' ? 'is-active' : ''}`}
+        onClick={() => onFilterChange('all')}
+      >
+        📍 すべて
+      </button>
+    </div>
+  )
+}
+
 function App() {
   const [reports, setReports] = useState([])
+  const [facilityReports, setFacilityReports] = useState([])
+  const [filterType, setFilterType] = useState('snow') // 'snow' または 'facility'
+  const [mapFilterType, setMapFilterType] = useState('all') // 'snow', 'facility', または 'all'
   const [selectedPosition, setSelectedPosition] = useState(null)
   const [status, setStatus] = useState('caution')
+  const [facilityStatus, setFacilityStatus] = useState('normal')
   const [target, setTarget] = useState('car')
   const [title, setTitle] = useState('')
+  const [facilityName, setFacilityName] = useState('')
   const [comment, setComment] = useState('')
   const [formError, setFormError] = useState('')
   const [dataError, setDataError] = useState('')
   const [loadingReports, setLoadingReports] = useState(true)
   const [editingReportId, setEditingReportId] = useState(null)
+  const [editingFacilityReportId, setEditingFacilityReportId] = useState(null)
 
   const trimmedTitle = title.trim()
   const trimmedComment = comment.trim()
+  const trimmedFacilityName = facilityName.trim()
   const isSubmitDisabled =
     !selectedPosition || !trimmedTitle || !trimmedComment
+  const isFacilitySubmitDisabled =
+    !selectedPosition || !trimmedFacilityName || !trimmedComment
   const isEditing = editingReportId !== null
+  const isFacilityEditing = editingFacilityReportId !== null
 
   useEffect(() => {
     const seedInitialReports = async () => {
@@ -268,14 +331,36 @@ function App() {
     return unsubscribe
   }, [])
 
+  useEffect(() => {
+    const unsubscribeFacility = onSnapshot(
+      facilityQuery,
+      (snapshot) => {
+        setFacilityReports(
+          snapshot.docs.map((reportDoc) => ({
+            ...reportDoc.data(),
+            id: reportDoc.id,
+          })),
+        )
+      },
+      (error) => {
+        console.error(error)
+      },
+    )
+
+    return unsubscribeFacility
+  }, [])
+
   const resetForm = () => {
     setSelectedPosition(null)
     setStatus('caution')
+    setFacilityStatus('normal')
     setTarget('car')
     setTitle('')
+    setFacilityName('')
     setComment('')
     setFormError('')
     setEditingReportId(null)
+    setEditingFacilityReportId(null)
   }
 
   const handleSubmit = async (event) => {
@@ -370,6 +455,93 @@ function App() {
     }
   }
 
+  const handleFacilitySubmit = async (event) => {
+    event.preventDefault()
+
+    if (!selectedPosition) {
+      setFormError('地図をクリックして投稿地点を選択してください。')
+      return
+    }
+
+    if (!trimmedFacilityName || !trimmedComment) {
+      setFormError('施設名とコメントを入力してください。')
+      return
+    }
+
+    const now = formatTokyoIso()
+
+    if (isFacilityEditing) {
+      try {
+        await updateDoc(doc(facilityCollection, editingFacilityReportId), {
+          facilityName: trimmedFacilityName,
+          status: facilityStatus,
+          comment: trimmedComment,
+          lat: selectedPosition.lat,
+          lng: selectedPosition.lng,
+          updatedAt: now,
+        })
+        setDataError('')
+        resetForm()
+      } catch (error) {
+        console.error(error)
+        setDataError('投稿の更新に失敗しました。')
+      }
+      return
+    }
+
+    const newReportRef = doc(facilityCollection)
+    const newReport = {
+      id: newReportRef.id,
+      facilityName: trimmedFacilityName,
+      status: facilityStatus,
+      comment: trimmedComment,
+      lat: selectedPosition.lat,
+      lng: selectedPosition.lng,
+      createdAt: now,
+      updatedAt: now,
+    }
+
+    try {
+      await setDoc(newReportRef, newReport)
+      setDataError('')
+      resetForm()
+    } catch (error) {
+      console.error(error)
+      setDataError('投稿の保存に失敗しました。')
+    }
+  }
+
+  const handleEditFacilityReport = (report) => {
+    setEditingFacilityReportId(report.id)
+    setFacilityStatus(report.status)
+    setFacilityName(report.facilityName)
+    setComment(report.comment)
+    setSelectedPosition({
+      lat: report.lat,
+      lng: report.lng,
+    })
+    setFormError('')
+    setFilterType('facility')
+  }
+
+  const handleDeleteFacilityReport = async (reportId) => {
+    if (!window.confirm('この投稿を削除しますか？')) {
+      return
+    }
+
+    try {
+      await deleteDoc(doc(facilityCollection, reportId))
+      setDataError('')
+
+      if (editingFacilityReportId === reportId) {
+        resetForm()
+      }
+    } catch (error) {
+      console.error(error)
+      setDataError('投稿の削除に失敗しました。')
+    }
+  }
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -397,8 +569,36 @@ function App() {
       <div className="content-grid">
         <section className="form-panel" aria-labelledby="post-form-title">
           <h2 id="post-form-title">
-            {isEditing ? '投稿を編集' : '除雪状況を投稿'}
+            {filterType === 'snow'
+              ? isEditing
+                ? '投稿を編集'
+                : '除雪状況を投稿'
+              : isFacilityEditing
+                ? '投稿を編集'
+                : '施設情報を投稿'}
           </h2>
+
+          <div className="filter-buttons">
+            <button
+              className={`filter-button ${filterType === 'snow' ? 'is-active' : ''}`}
+              onClick={() => {
+                setFilterType('snow')
+                resetForm()
+              }}
+            >
+              ☑︎ 道路情報
+            </button>
+            <button
+              className={`filter-button ${filterType === 'facility' ? 'is-active' : ''}`}
+              onClick={() => {
+                setFilterType('facility')
+                resetForm()
+              }}
+            >
+              ☑︎ 施設情報
+            </button>
+          </div>
+
           <p className="selected-position">
             {selectedPosition
               ? `選択中の位置：緯度 ${selectedPosition.lat.toFixed(
@@ -411,7 +611,8 @@ function App() {
           )}
           {dataError && <p className="form-error">{dataError}</p>}
 
-          <form className="report-form" onSubmit={handleSubmit}>
+          {filterType === 'snow' ? (
+            <form className="report-form" onSubmit={handleSubmit}>
             <fieldset>
               <legend>状態</legend>
               <div className="option-grid status-option-grid">
@@ -491,7 +692,68 @@ function App() {
                 </button>
               )}
             </div>
-          </form>
+            </form>
+          ) : (
+            <form className="report-form" onSubmit={handleFacilitySubmit}>
+              <label>
+                施設名
+                <input
+                  type="text"
+                  value={facilityName}
+                  onChange={(event) => setFacilityName(event.target.value)}
+                  required
+                />
+              </label>
+
+              <fieldset>
+                <legend>営業状況</legend>
+                <div className="option-grid status-option-grid">
+                  {Object.entries(facilityStatusStyles).map(([statusValue, style]) => (
+                    <button
+                      className={`option-button ${
+                        facilityStatus === statusValue ? 'is-selected' : ''
+                      }`}
+                      key={statusValue}
+                      type="button"
+                      aria-pressed={facilityStatus === statusValue}
+                      style={{ '--option-color': style.color }}
+                      onClick={() => setFacilityStatus(statusValue)}
+                    >
+                      <span className="option-icon" aria-hidden="true" />
+                      <span>{style.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
+
+              <label>
+                コメント
+                <textarea
+                  value={comment}
+                  onChange={(event) => setComment(event.target.value)}
+                  rows="5"
+                  required
+                />
+              </label>
+
+              {formError && <p className="form-error">{formError}</p>}
+
+              <div className="form-actions">
+                <button type="submit" disabled={isFacilitySubmitDisabled}>
+                  {isFacilityEditing ? '更新する' : '投稿する'}
+                </button>
+                {isFacilityEditing && (
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={resetForm}
+                  >
+                    キャンセル
+                  </button>
+                )}
+              </div>
+            </form>
+          )}
         </section>
 
         <section className="map-panel" aria-label="北陸地域の除雪情報マップ">
@@ -503,6 +765,7 @@ function App() {
             className="snow-map"
           >
             <MapClickHandler onSelect={setSelectedPosition} />
+            <MapFilterButtons filterType={mapFilterType} onFilterChange={setMapFilterType} />
 
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -516,63 +779,110 @@ function App() {
               />
             )}
 
-            {reports.map((report) => (
-              <Marker
-                key={report.id}
-                position={[report.lat, report.lng]}
-                icon={createStatusIcon(getMapStatus(report.status))}
-              >
-                <Popup>
-                  <article className="report-popup">
-                    <span
-                      className="popup-status"
-                      style={{
-                        '--popup-status-color':
-                          mapStatusStyles[getMapStatus(report.status)].color,
-                      }}
-                    >
-                      {mapStatusStyles[getMapStatus(report.status)].label}
-                    </span>
-                    <h2>{report.title}</h2>
-                    <p>{report.comment}</p>
-                    <dl>
-                      {report.area && (
+            {(mapFilterType === 'snow' || mapFilterType === 'all') &&
+              reports.map((report) => (
+                <Marker
+                  key={report.id}
+                  position={[report.lat, report.lng]}
+                  icon={createStatusIcon(getMapStatus(report.status))}
+                >
+                  <Popup>
+                    <article className="report-popup">
+                      <span
+                        className="popup-status"
+                        style={{
+                          '--popup-status-color':
+                            mapStatusStyles[getMapStatus(report.status)].color,
+                        }}
+                      >
+                        {mapStatusStyles[getMapStatus(report.status)].label}
+                      </span>
+                      <h2>{report.title}</h2>
+                      <p>{report.comment}</p>
+                      <dl>
+                        {report.area && (
+                          <div>
+                            <dt>エリア</dt>
+                            <dd>{report.area}</dd>
+                          </div>
+                        )}
                         <div>
-                          <dt>エリア</dt>
-                          <dd>{report.area}</dd>
+                          <dt>詳細理由</dt>
+                          <dd>{statusStyles[report.status].label}</dd>
                         </div>
-                      )}
-                      <div>
-                        <dt>詳細理由</dt>
-                        <dd>{statusStyles[report.status].label}</dd>
+                        <div>
+                          <dt>対象</dt>
+                          <dd>{targetLabels[report.target]}</dd>
+                        </div>
+                      </dl>
+                      <time dateTime={report.updatedAt}>
+                        {formatUpdatedAt(report.updatedAt)}
+                      </time>
+                      <div className="popup-actions">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            handleEditReport(report)
+                            setFilterType('snow')
+                          }}
+                        >
+                          編集
+                        </button>
+                        <button
+                          className="danger-button"
+                          type="button"
+                          onClick={() => handleDeleteReport(report.id)}
+                        >
+                          削除
+                        </button>
                       </div>
-                      <div>
-                        <dt>対象</dt>
-                        <dd>{targetLabels[report.target]}</dd>
+                    </article>
+                  </Popup>
+                </Marker>
+              ))}
+
+            {(mapFilterType === 'facility' || mapFilterType === 'all') &&
+              facilityReports.map((report) => (
+                <Marker
+                  key={report.id}
+                  position={[report.lat, report.lng]}
+                  icon={createFacilityStatusIcon(report.status)}
+                >
+                  <Popup>
+                    <article className="report-popup">
+                      <span
+                        className="popup-status"
+                        style={{
+                          '--popup-status-color':
+                            facilityStatusStyles[report.status].color,
+                        }}
+                      >
+                        {facilityStatusStyles[report.status].label}
+                      </span>
+                      <h2>{report.facilityName}</h2>
+                      <p>{report.comment}</p>
+                      <time dateTime={report.updatedAt}>
+                        {formatUpdatedAt(report.updatedAt)}
+                      </time>
+                      <div className="popup-actions">
+                        <button
+                          type="button"
+                          onClick={() => handleEditFacilityReport(report)}
+                        >
+                          編集
+                        </button>
+                        <button
+                          className="danger-button"
+                          type="button"
+                          onClick={() => handleDeleteFacilityReport(report.id)}
+                        >
+                          削除
+                        </button>
                       </div>
-                    </dl>
-                    <time dateTime={report.updatedAt}>
-                      {formatUpdatedAt(report.updatedAt)}
-                    </time>
-                    <div className="popup-actions">
-                      <button
-                        type="button"
-                        onClick={() => handleEditReport(report)}
-                      >
-                        編集
-                      </button>
-                      <button
-                        className="danger-button"
-                        type="button"
-                        onClick={() => handleDeleteReport(report.id)}
-                      >
-                        削除
-                      </button>
-                    </div>
-                  </article>
-                </Popup>
-              </Marker>
-            ))}
+                    </article>
+                  </Popup>
+                </Marker>
+              ))}
           </MapContainer>
         </section>
       </div>

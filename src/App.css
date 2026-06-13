@@ -86,6 +86,37 @@
   line-height: 1.35;
 }
 
+.filter-buttons {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.filter-button {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text-strong);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.filter-button:hover {
+  border-color: #1d7ed0;
+  background: color-mix(in srgb, #1d7ed0 8%, #fff);
+}
+
+.filter-button.is-active {
+  border-color: #1d7ed0;
+  background: #1d7ed0;
+  color: #fff;
+}
+
 .selected-position {
   margin: 0 0 16px;
   color: var(--text-muted);
@@ -277,12 +308,59 @@
   border-radius: 8px;
   background: var(--panel);
   box-shadow: var(--shadow);
+  position: relative;
 }
 
 .snow-map {
   width: 100%;
   height: min(72svh, 720px);
   min-height: 620px;
+}
+
+.map-filter-container {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  gap: 8px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.12);
+  z-index: 999;
+}
+
+.map-filter-button {
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #fff;
+  color: #6b7280;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.map-filter-button:hover {
+  border-color: #9ca3af;
+  background: #f9fafb;
+}
+
+.map-filter-button.is-active {
+  border-color: #1d7ed0;
+  background: #1d7ed0;
+  color: #fff;
+}
+
+.facility-marker {
+  background: transparent;
+  border: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .snow-marker {
@@ -300,6 +378,14 @@
   box-shadow:
     0 4px 12px rgba(15, 23, 42, 0.34),
     0 0 0 6px color-mix(in srgb, var(--marker-color) 18%, transparent);
+}
+
+.facility-marker {
+  background: transparent;
+  border: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .selected-marker {
