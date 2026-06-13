@@ -64,6 +64,116 @@
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--legend-color) 18%, transparent);
 }
 
+.content-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.form-panel {
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.form-panel h2 {
+  margin: 0 0 12px;
+  color: var(--text-strong);
+  font-size: 20px;
+  line-height: 1.35;
+}
+
+.selected-position {
+  margin: 0 0 16px;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.report-form {
+  display: grid;
+  gap: 14px;
+}
+
+.report-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.report-form input,
+.report-form select,
+.report-form textarea {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text-strong);
+  font: inherit;
+}
+
+.report-form input,
+.report-form select {
+  height: 42px;
+  padding: 0 10px;
+}
+
+.report-form textarea {
+  min-height: 120px;
+  padding: 10px;
+  resize: vertical;
+}
+
+.report-form input:focus,
+.report-form select:focus,
+.report-form textarea:focus {
+  outline: 3px solid rgba(29, 126, 208, 0.2);
+  border-color: #1d7ed0;
+}
+
+.form-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.report-form button {
+  height: 44px;
+  border: 0;
+  border-radius: 8px;
+  background: #1d7ed0;
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.report-form button:disabled {
+  background: #94a3b8;
+  cursor: not-allowed;
+}
+
+.report-form .secondary-button {
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text-strong);
+}
+
+.report-form .secondary-button:hover {
+  background: #f8fafc;
+}
+
+.form-error {
+  margin: 0;
+  color: #d93939;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .map-panel {
   overflow: hidden;
   min-height: 620px;
@@ -94,6 +204,23 @@
   box-shadow:
     0 4px 12px rgba(15, 23, 42, 0.34),
     0 0 0 6px color-mix(in srgb, var(--marker-color) 18%, transparent);
+}
+
+.selected-marker {
+  background: transparent;
+  border: 0;
+}
+
+.selected-marker span {
+  display: block;
+  width: 26px;
+  height: 26px;
+  border: 3px solid #fff;
+  border-radius: 999px;
+  background: #111827;
+  box-shadow:
+    0 4px 12px rgba(15, 23, 42, 0.34),
+    0 0 0 7px rgba(17, 24, 39, 0.18);
 }
 
 .report-popup {
@@ -145,6 +272,29 @@
   font-weight: 700;
 }
 
+.popup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.popup-actions button {
+  min-width: 72px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: #1d7ed0;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.popup-actions .danger-button {
+  background: #d93939;
+}
+
 .popup-status {
   display: inline-flex;
   align-items: center;
@@ -174,6 +324,10 @@
 
   .status-legend li {
     font-size: 13px;
+  }
+
+  .content-grid {
+    grid-template-columns: 1fr;
   }
 
   .map-panel,

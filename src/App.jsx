@@ -1,5 +1,12 @@
+import { useState } from 'react'
 import L from 'leaflet'
-import { MapContainer, Marker, Popup, TileLayer } from 'react-leaflet'
+import {
+  MapContainer,
+  Marker,
+  Popup,
+  TileLayer,
+  useMapEvents,
+} from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import './App.css'
 
@@ -31,6 +38,8 @@ const targetLabels = {
   pedestrian: '歩行者',
   both: '車・歩行者',
 }
+
+const targetOptions = ['pedestrian', 'car', 'both']
 
 const snowReports = [
   {
@@ -122,6 +131,11 @@ const formatUpdatedAt = (date) =>
     timeZone: 'Asia/Tokyo',
   }).format(new Date(date))
 
+const formatTokyoIso = (date = new Date()) => {
+  const tokyoTime = new Date(date.getTime() + 9 * 60 * 60 * 1000)
+  return `${tokyoTime.toISOString().slice(0, 19)}+09:00`
+}
+
 const createStatusIcon = (status) => {
   const { color, label } = statusStyles[status]
 
@@ -134,7 +148,136 @@ const createStatusIcon = (status) => {
   })
 }
 
+const selectedPositionIcon = L.divIcon({
+  className: 'selected-marker',
+  html: '<span aria-label="選択中の投稿地点"></span>',
+  iconSize: [32, 32],
+  iconAnchor: [16, 16],
+  popupAnchor: [0, -18],
+})
+
+function MapClickHandler({ onSelect }) {
+  useMapEvents({
+    click(event) {
+      onSelect({
+        lat: event.latlng.lat,
+        lng: event.latlng.lng,
+      })
+    },
+  })
+
+  return null
+}
+
 function App() {
+  const [reports, setReports] = useState(snowReports)
+  const [selectedPosition, setSelectedPosition] = useState(null)
+  const [status, setStatus] = useState('caution')
+  const [target, setTarget] = useState('car')
+  const [title, setTitle] = useState('')
+  const [comment, setComment] = useState('')
+  const [formError, setFormError] = useState('')
+  const [editingReportId, setEditingReportId] = useState(null)
+
+  const trimmedTitle = title.trim()
+  const trimmedComment = comment.trim()
+  const isSubmitDisabled =
+    !selectedPosition || !trimmedTitle || !trimmedComment
+  const isEditing = editingReportId !== null
+
+  const resetForm = () => {
+    setSelectedPosition(null)
+    setStatus('caution')
+    setTarget('car')
+    setTitle('')
+    setComment('')
+    setFormError('')
+    setEditingReportId(null)
+  }
+
+  const handleSubmit = (event) => {
+    event.preventDefault()
+
+    if (!selectedPosition) {
+      setFormError('地図をクリックして投稿地点を選択してください。')
+      return
+    }
+
+    if (!trimmedTitle || !trimmedComment) {
+      setFormError('タイトルとコメントを入力してください。')
+      return
+    }
+
+    const now = formatTokyoIso()
+
+    if (isEditing) {
+      setReports((currentReports) =>
+        currentReports.map((report) =>
+          report.id === editingReportId
+            ? {
+                ...report,
+                title: trimmedTitle,
+                status,
+                target,
+                comment: trimmedComment,
+                lat: selectedPosition.lat,
+                lng: selectedPosition.lng,
+                isResolved: status === 'cleared',
+                updatedAt: now,
+              }
+            : report,
+        ),
+      )
+      resetForm()
+      return
+    }
+
+    const nextId = Math.max(...reports.map((report) => report.id), 0) + 1
+    const newReport = {
+      id: nextId,
+      title: trimmedTitle,
+      area: '',
+      status,
+      target,
+      comment: trimmedComment,
+      lat: selectedPosition.lat,
+      lng: selectedPosition.lng,
+      isResolved: status === 'cleared',
+      createdAt: now,
+      updatedAt: now,
+    }
+
+    setReports((currentReports) => [...currentReports, newReport])
+    resetForm()
+  }
+
+  const handleEditReport = (report) => {
+    setEditingReportId(report.id)
+    setStatus(report.status)
+    setTarget(report.target)
+    setTitle(report.title)
+    setComment(report.comment)
+    setSelectedPosition({
+      lat: report.lat,
+      lng: report.lng,
+    })
+    setFormError('')
+  }
+
+  const handleDeleteReport = (reportId) => {
+    if (!window.confirm('この投稿を削除しますか？')) {
+      return
+    }
+
+    setReports((currentReports) =>
+      currentReports.filter((report) => report.id !== reportId),
+    )
+
+    if (editingReportId === reportId) {
+      resetForm()
+    }
+  }
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -159,56 +302,165 @@ function App() {
         </ul>
       </header>
 
-      <section className="map-panel" aria-label="北陸地域の除雪情報マップ">
-        <MapContainer
-          center={[36.95, 137.55]}
-          zoom={7}
-          minZoom={6}
-          scrollWheelZoom
-          className="snow-map"
-        >
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
+      <div className="content-grid">
+        <section className="form-panel" aria-labelledby="post-form-title">
+          <h2 id="post-form-title">
+            {isEditing ? '投稿を編集' : '除雪状況を投稿'}
+          </h2>
+          <p className="selected-position">
+            {selectedPosition
+              ? `選択中の位置：緯度 ${selectedPosition.lat.toFixed(
+                  5,
+                )}、経度 ${selectedPosition.lng.toFixed(5)}`
+              : '地図をクリックして投稿地点を選択してください'}
+          </p>
 
-          {snowReports.map((report) => (
-            <Marker
-              key={report.id}
-              position={[report.lat, report.lng]}
-              icon={createStatusIcon(report.status)}
-            >
-              <Popup>
-                <article className="report-popup">
-                  <span
-                    className="popup-status"
-                    style={{
-                      '--popup-status-color': statusStyles[report.status].color,
-                    }}
-                  >
-                    {statusStyles[report.status].label}
-                  </span>
-                  <h2>{report.title}</h2>
-                  <p>{report.comment}</p>
-                  <dl>
-                    <div>
-                      <dt>エリア</dt>
-                      <dd>{report.area}</dd>
+          <form className="report-form" onSubmit={handleSubmit}>
+            <label>
+              状態
+              <select
+                value={status}
+                onChange={(event) => setStatus(event.target.value)}
+              >
+                {Object.entries(statusStyles).map(([statusValue, style]) => (
+                  <option key={statusValue} value={statusValue}>
+                    {style.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              対象
+              <select
+                value={target}
+                onChange={(event) => setTarget(event.target.value)}
+              >
+                {targetOptions.map((targetValue) => (
+                  <option key={targetValue} value={targetValue}>
+                    {targetLabels[targetValue]}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              タイトル
+              <input
+                type="text"
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                required
+              />
+            </label>
+
+            <label>
+              コメント
+              <textarea
+                value={comment}
+                onChange={(event) => setComment(event.target.value)}
+                rows="5"
+                required
+              />
+            </label>
+
+            {formError && <p className="form-error">{formError}</p>}
+
+            <div className="form-actions">
+              <button type="submit" disabled={isSubmitDisabled}>
+                {isEditing ? '更新する' : '投稿する'}
+              </button>
+              {isEditing && (
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={resetForm}
+                >
+                  キャンセル
+                </button>
+              )}
+            </div>
+          </form>
+        </section>
+
+        <section className="map-panel" aria-label="北陸地域の除雪情報マップ">
+          <MapContainer
+            center={[36.95, 137.55]}
+            zoom={7}
+            minZoom={6}
+            scrollWheelZoom
+            className="snow-map"
+          >
+            <MapClickHandler onSelect={setSelectedPosition} />
+
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            />
+
+            {selectedPosition && (
+              <Marker
+                position={[selectedPosition.lat, selectedPosition.lng]}
+                icon={selectedPositionIcon}
+              />
+            )}
+
+            {reports.map((report) => (
+              <Marker
+                key={report.id}
+                position={[report.lat, report.lng]}
+                icon={createStatusIcon(report.status)}
+              >
+                <Popup>
+                  <article className="report-popup">
+                    <span
+                      className="popup-status"
+                      style={{
+                        '--popup-status-color':
+                          statusStyles[report.status].color,
+                      }}
+                    >
+                      {statusStyles[report.status].label}
+                    </span>
+                    <h2>{report.title}</h2>
+                    <p>{report.comment}</p>
+                    <dl>
+                      {report.area && (
+                        <div>
+                          <dt>エリア</dt>
+                          <dd>{report.area}</dd>
+                        </div>
+                      )}
+                      <div>
+                        <dt>対象</dt>
+                        <dd>{targetLabels[report.target]}</dd>
+                      </div>
+                    </dl>
+                    <time dateTime={report.updatedAt}>
+                      {formatUpdatedAt(report.updatedAt)}
+                    </time>
+                    <div className="popup-actions">
+                      <button
+                        type="button"
+                        onClick={() => handleEditReport(report)}
+                      >
+                        編集
+                      </button>
+                      <button
+                        className="danger-button"
+                        type="button"
+                        onClick={() => handleDeleteReport(report.id)}
+                      >
+                        削除
+                      </button>
                     </div>
-                    <div>
-                      <dt>対象</dt>
-                      <dd>{targetLabels[report.target]}</dd>
-                    </div>
-                  </dl>
-                  <time dateTime={report.updatedAt}>
-                    {formatUpdatedAt(report.updatedAt)}
-                  </time>
-                </article>
-              </Popup>
-            </Marker>
-          ))}
-        </MapContainer>
-      </section>
+                  </article>
+                </Popup>
+              </Marker>
+            ))}
+          </MapContainer>
+        </section>
+      </div>
     </main>
   )
 }
