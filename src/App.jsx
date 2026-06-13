@@ -1,5 +1,15 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import L from 'leaflet'
+import {
+  collection,
+  deleteDoc,
+  doc,
+  onSnapshot,
+  orderBy,
+  query,
+  setDoc,
+  updateDoc,
+} from 'firebase/firestore'
 import {
   MapContainer,
   Marker,
@@ -9,6 +19,7 @@ import {
 } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import './App.css'
+import { db } from './firebase'
 
 const statusStyles = {
   cleared: {
@@ -178,6 +189,9 @@ const selectedPositionIcon = L.divIcon({
   popupAnchor: [0, -18],
 })
 
+const reportsCollection = collection(db, 'snowReports')
+const reportsQuery = query(reportsCollection, orderBy('updatedAt', 'desc'))
+
 function MapClickHandler({ onSelect }) {
   useMapEvents({
     click(event) {
@@ -192,13 +206,15 @@ function MapClickHandler({ onSelect }) {
 }
 
 function App() {
-  const [reports, setReports] = useState(snowReports)
+  const [reports, setReports] = useState([])
   const [selectedPosition, setSelectedPosition] = useState(null)
   const [status, setStatus] = useState('caution')
   const [target, setTarget] = useState('car')
   const [title, setTitle] = useState('')
   const [comment, setComment] = useState('')
   const [formError, setFormError] = useState('')
+  const [dataError, setDataError] = useState('')
+  const [loadingReports, setLoadingReports] = useState(true)
   const [editingReportId, setEditingReportId] = useState(null)
 
   const trimmedTitle = title.trim()
@@ -206,6 +222,51 @@ function App() {
   const isSubmitDisabled =
     !selectedPosition || !trimmedTitle || !trimmedComment
   const isEditing = editingReportId !== null
+
+  useEffect(() => {
+    const seedInitialReports = async () => {
+      await Promise.all(
+        snowReports.map((report) => {
+          const seedId = `seed-${report.id}`
+          return setDoc(doc(reportsCollection, seedId), {
+            ...report,
+            id: seedId,
+          })
+        }),
+      )
+    }
+
+    const unsubscribe = onSnapshot(
+      reportsQuery,
+      (snapshot) => {
+        if (snapshot.empty) {
+          seedInitialReports().catch((error) => {
+            console.error(error)
+            setDataError('初期データの保存に失敗しました。')
+          })
+          setReports([])
+          setLoadingReports(false)
+          return
+        }
+
+        setReports(
+          snapshot.docs.map((reportDoc) => ({
+            ...reportDoc.data(),
+            id: reportDoc.id,
+          })),
+        )
+        setDataError('')
+        setLoadingReports(false)
+      },
+      (error) => {
+        console.error(error)
+        setDataError('投稿データの読み込みに失敗しました。')
+        setLoadingReports(false)
+      },
+    )
+
+    return unsubscribe
+  }, [])
 
   const resetForm = () => {
     setSelectedPosition(null)
@@ -217,7 +278,7 @@ function App() {
     setEditingReportId(null)
   }
 
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault()
 
     if (!selectedPosition) {
@@ -233,30 +294,29 @@ function App() {
     const now = formatTokyoIso()
 
     if (isEditing) {
-      setReports((currentReports) =>
-        currentReports.map((report) =>
-          report.id === editingReportId
-            ? {
-                ...report,
-                title: trimmedTitle,
-                status,
-                target,
-                comment: trimmedComment,
-                lat: selectedPosition.lat,
-                lng: selectedPosition.lng,
-                isResolved: status === 'cleared',
-                updatedAt: now,
-              }
-            : report,
-        ),
-      )
-      resetForm()
+      try {
+        await updateDoc(doc(reportsCollection, editingReportId), {
+          title: trimmedTitle,
+          status,
+          target,
+          comment: trimmedComment,
+          lat: selectedPosition.lat,
+          lng: selectedPosition.lng,
+          isResolved: status === 'cleared',
+          updatedAt: now,
+        })
+        setDataError('')
+        resetForm()
+      } catch (error) {
+        console.error(error)
+        setDataError('投稿の更新に失敗しました。')
+      }
       return
     }
 
-    const nextId = Math.max(...reports.map((report) => report.id), 0) + 1
+    const newReportRef = doc(reportsCollection)
     const newReport = {
-      id: nextId,
+      id: newReportRef.id,
       title: trimmedTitle,
       area: '',
       status,
@@ -269,8 +329,14 @@ function App() {
       updatedAt: now,
     }
 
-    setReports((currentReports) => [...currentReports, newReport])
-    resetForm()
+    try {
+      await setDoc(newReportRef, newReport)
+      setDataError('')
+      resetForm()
+    } catch (error) {
+      console.error(error)
+      setDataError('投稿の保存に失敗しました。')
+    }
   }
 
   const handleEditReport = (report) => {
@@ -286,17 +352,21 @@ function App() {
     setFormError('')
   }
 
-  const handleDeleteReport = (reportId) => {
+  const handleDeleteReport = async (reportId) => {
     if (!window.confirm('この投稿を削除しますか？')) {
       return
     }
 
-    setReports((currentReports) =>
-      currentReports.filter((report) => report.id !== reportId),
-    )
+    try {
+      await deleteDoc(doc(reportsCollection, reportId))
+      setDataError('')
 
-    if (editingReportId === reportId) {
-      resetForm()
+      if (editingReportId === reportId) {
+        resetForm()
+      }
+    } catch (error) {
+      console.error(error)
+      setDataError('投稿の削除に失敗しました。')
     }
   }
 
@@ -336,6 +406,10 @@ function App() {
                 )}、経度 ${selectedPosition.lng.toFixed(5)}`
               : '地図をクリックして投稿地点を選択してください'}
           </p>
+          {loadingReports && (
+            <p className="data-status">投稿データを読み込んでいます。</p>
+          )}
+          {dataError && <p className="form-error">{dataError}</p>}
 
           <form className="report-form" onSubmit={handleSubmit}>
             <fieldset>

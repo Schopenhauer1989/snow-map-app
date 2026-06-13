@@ -263,6 +263,13 @@
   font-weight: 700;
 }
 
+.data-status {
+  margin: 0 0 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .map-panel {
   overflow: hidden;
   min-height: 620px;
