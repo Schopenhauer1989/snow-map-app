@@ -4,74 +4,123 @@ import 'leaflet/dist/leaflet.css'
 import './App.css'
 
 const statusStyles = {
-  除雪済み: {
-    color: '#1d7ed0',
+  cleared: {
+    color: '#1dd02f',
     label: '除雪済み',
   },
-  未除雪: {
-    color: '#d93939',
-    label: '未除雪',
-  },
-  積雪が多い: {
-    color: '#7c3aed',
-    label: '積雪が多い',
-  },
-  通行注意: {
+  caution: {
     color: '#f59e0b',
     label: '通行注意',
   },
+  heavy_snow: {
+    color: '#7c3aed',
+    label: '積雪多い',
+  },
+  blocked: {
+    color: '#d93939',
+    label: '通行止め',
+  },
+  icy: {
+    color: '#0891b2',
+    label: '凍結注意',
+  },
+}
+
+const targetLabels = {
+  car: '車',
+  pedestrian: '歩行者',
+  both: '車・歩行者',
 }
 
 const snowReports = [
   {
     id: 1,
     title: '金沢駅西口 周辺道路',
-    status: '除雪済み',
-    description: '駅前ロータリーから県道方面まで通行しやすい状態です。',
-    position: [36.5781, 136.6478],
-    updatedAt: '今日 07:20',
+    area: '金沢市',
+    status: 'cleared',
+    target: 'both',
+    comment: '駅前ロータリーから県道方面まで通行しやすい状態です。',
+    lat: 36.5781,
+    lng: 136.6478,
+    isResolved: true,
+    createdAt: '2026-06-13T07:20:00+09:00',
+    updatedAt: '2026-06-13T07:20:00+09:00',
   },
   {
     id: 2,
     title: '富山市 呉羽丘陵入口',
-    status: '通行注意',
-    description: '坂道で一部凍結が見られます。速度を落として通行してください。',
-    position: [36.6995, 137.1689],
-    updatedAt: '今日 07:45',
+    area: '富山市',
+    status: 'caution',
+    target: 'car',
+    comment: '路面に雪が残っており、坂道で滑りやすいです。',
+    lat: 36.6995,
+    lng: 137.1689,
+    isResolved: false,
+    createdAt: '2026-06-13T07:45:00+09:00',
+    updatedAt: '2026-06-13T07:45:00+09:00',
   },
   {
     id: 3,
     title: '福井市 大和田交差点',
-    status: '未除雪',
-    description: '生活道路側に雪が残っており、車幅が狭くなっています。',
-    position: [36.0959, 136.2478],
-    updatedAt: '今日 06:55',
+    area: '福井市',
+    status: 'blocked',
+    target: 'car',
+    comment: '生活道路側に雪が残っており、車幅が狭くなっています。',
+    lat: 36.0959,
+    lng: 136.2478,
+    isResolved: false,
+    createdAt: '2026-06-13T06:55:00+09:00',
+    updatedAt: '2026-06-13T06:55:00+09:00',
   },
   {
     id: 4,
     title: '新潟市 中央区 学校町通',
-    status: '積雪が多い',
-    description: '歩道と路肩にまとまった積雪があります。徒歩移動は注意が必要です。',
-    position: [37.9161, 139.0364],
-    updatedAt: '今日 08:05',
+    area: '新潟市',
+    status: 'heavy_snow',
+    target: 'pedestrian',
+    comment: '歩道と路肩にまとまった積雪があります。徒歩移動は注意が必要です。',
+    lat: 37.9161,
+    lng: 139.0364,
+    isResolved: false,
+    createdAt: '2026-06-13T08:05:00+09:00',
+    updatedAt: '2026-06-13T08:05:00+09:00',
   },
   {
     id: 5,
     title: '長岡市 宮内駅前',
-    status: '除雪済み',
-    description: '駅前通りは除雪済みで、バス停周辺も利用しやすい状態です。',
-    position: [37.4243, 138.8406],
-    updatedAt: '今日 07:10',
+    area: '長岡市',
+    status: 'cleared',
+    target: 'both',
+    comment: '駅前通りは除雪済みで、バス停周辺も利用しやすい状態です。',
+    lat: 37.4243,
+    lng: 138.8406,
+    isResolved: true,
+    createdAt: '2026-06-13T07:10:00+09:00',
+    updatedAt: '2026-06-13T07:10:00+09:00',
   },
   {
     id: 6,
     title: '白山市 鶴来支所付近',
-    status: '通行注意',
-    description: '交差点付近にシャーベット状の雪が残っています。',
-    position: [36.4497, 136.6266],
-    updatedAt: '今日 08:18',
+    area: '白山市',
+    status: 'icy',
+    target: 'both',
+    comment: '交差点付近にシャーベット状の雪が残っています。',
+    lat: 36.4497,
+    lng: 136.6266,
+    isResolved: false,
+    createdAt: '2026-06-13T08:18:00+09:00',
+    updatedAt: '2026-06-13T08:18:00+09:00',
   },
 ]
+
+const formatUpdatedAt = (date) =>
+  new Intl.DateTimeFormat('ja-JP', {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Tokyo',
+  }).format(new Date(date))
 
 const createStatusIcon = (status) => {
   const { color, label } = statusStyles[status]
@@ -126,7 +175,7 @@ function App() {
           {snowReports.map((report) => (
             <Marker
               key={report.id}
-              position={report.position}
+              position={[report.lat, report.lng]}
               icon={createStatusIcon(report.status)}
             >
               <Popup>
@@ -137,11 +186,23 @@ function App() {
                       '--popup-status-color': statusStyles[report.status].color,
                     }}
                   >
-                    {report.status}
+                    {statusStyles[report.status].label}
                   </span>
                   <h2>{report.title}</h2>
-                  <p>{report.description}</p>
-                  <time>{report.updatedAt}</time>
+                  <p>{report.comment}</p>
+                  <dl>
+                    <div>
+                      <dt>エリア</dt>
+                      <dd>{report.area}</dd>
+                    </div>
+                    <div>
+                      <dt>対象</dt>
+                      <dd>{targetLabels[report.target]}</dd>
+                    </div>
+                  </dl>
+                  <time dateTime={report.updatedAt}>
+                    {formatUpdatedAt(report.updatedAt)}
+                  </time>
                 </article>
               </Popup>
             </Marker>

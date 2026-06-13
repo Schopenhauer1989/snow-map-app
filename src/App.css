@@ -114,6 +114,31 @@
   line-height: 1.55;
 }
 
+.report-popup dl {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+
+.report-popup dl div {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  gap: 8px;
+}
+
+.report-popup dt {
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.report-popup dd {
+  margin: 0;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .report-popup time {
   color: #6b7280;
   font-size: 12px;
