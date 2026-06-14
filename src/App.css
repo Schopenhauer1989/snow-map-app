@@ -196,6 +196,29 @@
   gap: 14px;
 }
 
+.navigation-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.navigation-section {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.navigation-section .place-search-result-button,
+.navigation-section .waypoint-list li {
+  background: #fff;
+}
+
+.navigation-action-bar {
+  background: #fff;
+}
+
 .route-mode-label {
   margin: 0;
   padding: 10px;
@@ -578,6 +601,13 @@
     0 0 0 13px color-mix(in srgb, var(--marker-color) 14%, transparent);
 }
 
+.snow-marker.is-navigation-muted-marker span {
+  opacity: 0.42;
+  box-shadow:
+    0 3px 8px rgba(15, 23, 42, 0.2),
+    0 0 0 5px color-mix(in srgb, var(--marker-color) 10%, transparent);
+}
+
 @keyframes route-danger-pulse {
   0%,
   100% {
@@ -791,6 +821,10 @@
 
   .target-option-grid {
     grid-template-columns: repeat(3, minmax(80px, 1fr));
+  }
+
+  .navigation-section {
+    padding: 10px;
   }
 
   .map-panel,

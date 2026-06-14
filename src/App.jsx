@@ -172,11 +172,20 @@ const formatTokyoIso = (date = new Date()) => {
 
 const getMapStatus = (status) => mapStatusByReportStatus[status] ?? 'caution'
 
-const createStatusIcon = (status, { isRouteDanger = false } = {}) => {
+const createStatusIcon = (
+  status,
+  { isNavigationMuted = false, isRouteDanger = false } = {},
+) => {
   const { color, label } = mapStatusStyles[status]
 
   return L.divIcon({
-    className: `snow-marker${isRouteDanger ? ' is-route-danger-marker' : ''}`,
+    className: [
+      'snow-marker',
+      isNavigationMuted ? 'is-navigation-muted-marker' : '',
+      isRouteDanger ? 'is-route-danger-marker' : '',
+    ]
+      .filter(Boolean)
+      .join(' '),
     html: `<span aria-label="${label}" style="--marker-color: ${color}"></span>`,
     iconSize: [28, 28],
     iconAnchor: [14, 14],
@@ -604,9 +613,17 @@ function App() {
   }
 
   const handleToggleMode = () => {
-    setMode((currentMode) =>
-      currentMode === 'post' ? 'navigation' : 'post',
-    )
+    setMode((currentMode) => {
+      if (currentMode === 'navigation') {
+        setRouteDangerPosts([])
+        setHasCheckedRouteDanger(false)
+        setNavigationAlertMessage('')
+        setSelectedNavigationStep(null)
+        return 'post'
+      }
+
+      return 'navigation'
+    })
     setFormError('')
   }
 
@@ -780,7 +797,7 @@ function App() {
         </ul>
       </header>
 
-      {hasCheckedRouteDanger && (
+      {isNavigationMode && hasCheckedRouteDanger && (
         <div
           className={`route-alert-bar ${
             routeDangerPosts.length > 0 ? 'is-danger' : 'is-clear'
@@ -906,152 +923,173 @@ function App() {
         )}
 
         {isNavigationMode && (
-          <section className="form-panel" aria-labelledby="navigation-title">
+          <section
+            className="form-panel navigation-panel"
+            aria-labelledby="navigation-title"
+          >
             <h2 id="navigation-title">ナビゲーション設定</h2>
             <p className="selected-position">
               危険箇所を避けたい場合は、地図上で経由地を追加してください。
             </p>
 
             <div className="route-form">
-              <p className="route-mode-label">{routeModeLabel}</p>
+              <section className="navigation-section" aria-label="目的地検索">
+                <form
+                  className="place-search-form"
+                  onSubmit={handleSearchPlace}
+                >
+                  <label>
+                    目的地を検索
+                    <input
+                      type="search"
+                      value={placeSearchQuery}
+                      onChange={(event) =>
+                        setPlaceSearchQuery(event.target.value)
+                      }
+                      placeholder="例：金沢駅、富山県庁"
+                    />
+                  </label>
+                  <button type="submit" disabled={isSearchingPlace}>
+                    {isSearchingPlace ? '検索中...' : '検索'}
+                  </button>
+                </form>
 
-              <form className="place-search-form" onSubmit={handleSearchPlace}>
-                <label>
-                  目的地を検索
-                  <input
-                    type="search"
-                    value={placeSearchQuery}
-                    onChange={(event) =>
-                      setPlaceSearchQuery(event.target.value)
-                    }
-                    placeholder="例：金沢駅、富山県庁"
-                  />
-                </label>
-                <button type="submit" disabled={isSearchingPlace}>
-                  {isSearchingPlace ? '検索中...' : '検索'}
-                </button>
-              </form>
-
-              {placeSearchMessage && (
-                <p className="place-search-message">{placeSearchMessage}</p>
-              )}
+                {placeSearchMessage && (
+                  <p className="place-search-message">{placeSearchMessage}</p>
+                )}
+              </section>
 
               {placeSearchResults.length > 0 && (
-                <div className="place-search-results">
-                  {placeSearchResults.map((result) => (
-                    <button
-                      className="place-search-result-button"
-                      key={result.place_id}
-                      type="button"
-                      onClick={() => handleSelectPlaceSearchResult(result)}
-                    >
-                      <span>{result.display_name}</span>
-                      <small>
-                        緯度 {Number(result.lat).toFixed(5)}、経度{' '}
-                        {Number(result.lon).toFixed(5)}
-                      </small>
-                    </button>
-                  ))}
-                  <p className="place-search-attribution">
-                    Search results by OpenStreetMap Nominatim
-                  </p>
-                </div>
-              )}
-
-              <div
-                className="option-grid navigation-step-grid"
-                aria-label="ナビゲーション地点の入力対象"
-              >
-                <button
-                  className={`option-button navigation-step-button ${
-                    selectedNavigationStep === 'start' ? 'is-selected' : ''
-                  }`}
-                  type="button"
-                  aria-pressed={selectedNavigationStep === 'start'}
-                  onClick={() => setSelectedNavigationStep('start')}
+                <section
+                  className="navigation-section"
+                  aria-label="目的地候補"
                 >
-                  出発地を選択
-                </button>
-                <button
-                  className="option-button navigation-step-button navigation-current-location-button"
-                  type="button"
-                  onClick={handleUseCurrentLocationAsStart}
-                >
-                  現在地を出発地にする
-                </button>
-                <button
-                  className={`option-button navigation-step-button ${
-                    selectedNavigationStep === 'destination'
-                      ? 'is-selected'
-                      : ''
-                  }`}
-                  type="button"
-                  aria-pressed={selectedNavigationStep === 'destination'}
-                  onClick={() => setSelectedNavigationStep('destination')}
-                >
-                  目的地を選択
-                </button>
-                <button
-                  className={`option-button navigation-step-button ${
-                    selectedNavigationStep === 'waypoint' ? 'is-selected' : ''
-                  }`}
-                  type="button"
-                  aria-pressed={selectedNavigationStep === 'waypoint'}
-                  onClick={() => setSelectedNavigationStep('waypoint')}
-                >
-                  経由地を追加
-                </button>
-                <button
-                  className="option-button navigation-step-button navigation-clear-button"
-                  type="button"
-                  onClick={handleClearNavigation}
-                >
-                  クリア
-                </button>
-              </div>
-
-              <dl className="navigation-point-list">
-                <div>
-                  <dt>出発地</dt>
-                  <dd>{formatPoint(startPoint)}</dd>
-                </div>
-                <div>
-                  <dt>目的地</dt>
-                  <dd>{formatPoint(destinationPoint)}</dd>
-                </div>
-                <div>
-                  <dt>経由地</dt>
-                  <dd>
-                    {waypointList.length > 0
-                      ? `${waypointList.length}件`
-                      : '未選択'}
-                  </dd>
-                </div>
-              </dl>
-
-              {waypointList.length > 0 && (
-                <ol className="waypoint-list">
-                  {waypointList.map((waypoint, index) => (
-                    <li key={`${waypoint.lat}-${waypoint.lng}-${index}`}>
-                      <div>
-                        <strong>経由地 {index + 1}</strong>
-                        <span>{formatPoint(waypoint)}</span>
-                      </div>
+                  <div className="place-search-results">
+                    {placeSearchResults.map((result) => (
                       <button
+                        className="place-search-result-button"
+                        key={result.place_id}
                         type="button"
-                        onClick={() => handleDeleteWaypoint(index)}
+                        onClick={() => handleSelectPlaceSearchResult(result)}
                       >
-                        削除
+                        <span>{result.display_name}</span>
+                        <small>
+                          緯度 {Number(result.lat).toFixed(5)}、経度{' '}
+                          {Number(result.lon).toFixed(5)}
+                        </small>
                       </button>
-                    </li>
-                  ))}
-                </ol>
+                    ))}
+                    <p className="place-search-attribution">
+                      Search results by OpenStreetMap Nominatim
+                    </p>
+                  </div>
+                </section>
               )}
+
+              <section className="navigation-section" aria-label="目的地詳細">
+                <dl className="navigation-point-list">
+                  <div>
+                    <dt>出発地</dt>
+                    <dd>{formatPoint(startPoint)}</dd>
+                  </div>
+                  <div>
+                    <dt>目的地</dt>
+                    <dd>{formatPoint(destinationPoint)}</dd>
+                  </div>
+                  <div>
+                    <dt>経由地</dt>
+                    <dd>
+                      {waypointList.length > 0
+                        ? `${waypointList.length}件`
+                        : '未選択'}
+                    </dd>
+                  </div>
+                </dl>
+
+                {waypointList.length > 0 && (
+                  <ol className="waypoint-list">
+                    {waypointList.map((waypoint, index) => (
+                      <li key={`${waypoint.lat}-${waypoint.lng}-${index}`}>
+                        <div>
+                          <strong>経由地 {index + 1}</strong>
+                          <span>{formatPoint(waypoint)}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteWaypoint(index)}
+                        >
+                          削除
+                        </button>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </section>
+
+              <section
+                className="navigation-section navigation-action-bar"
+                aria-label="ナビゲーション設定バー"
+              >
+                <p className="route-mode-label">{routeModeLabel}</p>
+
+                <div
+                  className="option-grid navigation-step-grid"
+                  aria-label="ナビゲーション地点の入力対象"
+                >
+                  <button
+                    className={`option-button navigation-step-button ${
+                      selectedNavigationStep === 'start' ? 'is-selected' : ''
+                    }`}
+                    type="button"
+                    aria-pressed={selectedNavigationStep === 'start'}
+                    onClick={() => setSelectedNavigationStep('start')}
+                  >
+                    出発地を選択
+                  </button>
+                  <button
+                    className="option-button navigation-step-button navigation-current-location-button"
+                    type="button"
+                    onClick={handleUseCurrentLocationAsStart}
+                  >
+                    現在地を出発地にする
+                  </button>
+                  <button
+                    className={`option-button navigation-step-button ${
+                      selectedNavigationStep === 'destination'
+                        ? 'is-selected'
+                        : ''
+                    }`}
+                    type="button"
+                    aria-pressed={selectedNavigationStep === 'destination'}
+                    onClick={() => setSelectedNavigationStep('destination')}
+                  >
+                    目的地を選択
+                  </button>
+                  <button
+                    className={`option-button navigation-step-button ${
+                      selectedNavigationStep === 'waypoint'
+                        ? 'is-selected'
+                        : ''
+                    }`}
+                    type="button"
+                    aria-pressed={selectedNavigationStep === 'waypoint'}
+                    onClick={() => setSelectedNavigationStep('waypoint')}
+                  >
+                    経由地を追加
+                  </button>
+                  <button
+                    className="option-button navigation-step-button navigation-clear-button"
+                    type="button"
+                    onClick={handleClearNavigation}
+                  >
+                    クリア
+                  </button>
+                </div>
+              </section>
 
               {navigationAlertMessage && (
                 <p className="navigation-alert">{navigationAlertMessage}</p>
               )}
-
             </div>
           </section>
         )}
@@ -1086,7 +1124,7 @@ function App() {
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
 
-            {selectedPosition && (
+            {isPostMode && selectedPosition && (
               <Marker
                 position={[selectedPosition.lat, selectedPosition.lng]}
                 icon={selectedPositionIcon}
@@ -1133,7 +1171,10 @@ function App() {
                 key={report.id}
                 position={[report.lat, report.lng]}
                 icon={createStatusIcon(getMapStatus(report.status), {
-                  isRouteDanger: routeDangerPostIds.has(report.id),
+                  isNavigationMuted:
+                    isNavigationMode && !routeDangerPostIds.has(report.id),
+                  isRouteDanger:
+                    isNavigationMode && routeDangerPostIds.has(report.id),
                 })}
               >
                 <Popup>
@@ -1168,21 +1209,23 @@ function App() {
                     <time dateTime={report.updatedAt}>
                       {formatUpdatedAt(report.updatedAt)}
                     </time>
-                    <div className="popup-actions">
-                      <button
-                        type="button"
-                        onClick={() => handleEditReport(report)}
-                      >
-                        編集
-                      </button>
-                      <button
-                        className="danger-button"
-                        type="button"
-                        onClick={() => handleDeleteReport(report.id)}
-                      >
-                        削除
-                      </button>
-                    </div>
+                    {isPostMode && (
+                      <div className="popup-actions">
+                        <button
+                          type="button"
+                          onClick={() => handleEditReport(report)}
+                        >
+                          編集
+                        </button>
+                        <button
+                          className="danger-button"
+                          type="button"
+                          onClick={() => handleDeleteReport(report.id)}
+                        >
+                          削除
+                        </button>
+                      </div>
+                    )}
                   </article>
                 </Popup>
               </Marker>
