@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import L from 'leaflet'
 import {
   collection,
@@ -15,16 +15,19 @@ import {
   Marker,
   Popup,
   TileLayer,
+  useMap,
   useMapEvents,
 } from 'react-leaflet'
+import 'leaflet-routing-machine'
 import 'leaflet/dist/leaflet.css'
+import 'leaflet-routing-machine/dist/leaflet-routing-machine.css'
 import './App.css'
 import { db } from './firebase'
 
 const statusStyles = {
   cleared: {
     color: '#1dd02f',
-    label: '除雪済み',
+    label: '通行可能',
   },
   caution: {
     color: '#f59e0b',
@@ -83,8 +86,15 @@ const targetIcons = {
   both: '両',
 }
 
+const passableReportDefaults = {
+  passableReportCount: 0,
+  passableReports: [],
+  autoResolved: false,
+}
+
 const snowReports = [
   {
+    ...passableReportDefaults,
     id: 1,
     title: '金沢駅西口 周辺道路',
     area: '金沢市',
@@ -98,6 +108,7 @@ const snowReports = [
     updatedAt: '2026-06-13T07:20:00+09:00',
   },
   {
+    ...passableReportDefaults,
     id: 2,
     title: '富山市 呉羽丘陵入口',
     area: '富山市',
@@ -111,6 +122,7 @@ const snowReports = [
     updatedAt: '2026-06-13T07:45:00+09:00',
   },
   {
+    ...passableReportDefaults,
     id: 3,
     title: '福井市 大和田交差点',
     area: '福井市',
@@ -124,6 +136,7 @@ const snowReports = [
     updatedAt: '2026-06-13T06:55:00+09:00',
   },
   {
+    ...passableReportDefaults,
     id: 4,
     title: '新潟市 中央区 学校町通',
     area: '新潟市',
@@ -137,6 +150,7 @@ const snowReports = [
     updatedAt: '2026-06-13T08:05:00+09:00',
   },
   {
+    ...passableReportDefaults,
     id: 5,
     title: '長岡市 宮内駅前',
     area: '長岡市',
@@ -150,6 +164,7 @@ const snowReports = [
     updatedAt: '2026-06-13T07:10:00+09:00',
   },
   {
+    ...passableReportDefaults,
     id: 6,
     title: '白山市 鶴来支所付近',
     area: '白山市',
@@ -180,11 +195,20 @@ const formatTokyoIso = (date = new Date()) => {
 
 const getMapStatus = (status) => mapStatusByReportStatus[status] ?? 'caution'
 
-const createStatusIcon = (status) => {
+const createStatusIcon = (
+  status,
+  { isNavigationMuted = false, isRouteDanger = false } = {},
+) => {
   const { color, label } = mapStatusStyles[status]
 
   return L.divIcon({
-    className: 'snow-marker',
+    className: [
+      'snow-marker',
+      isNavigationMuted ? 'is-navigation-muted-marker' : '',
+      isRouteDanger ? 'is-route-danger-marker' : '',
+    ]
+      .filter(Boolean)
+      .join(' '),
     html: `<span aria-label="${label}" style="--marker-color: ${color}"></span>`,
     iconSize: [28, 28],
     iconAnchor: [14, 14],
@@ -259,6 +283,7 @@ function MapFilterButtons({ filterType, onFilterChange }) {
 }
 
 function App() {
+  const [mode, setMode] = useState('post')
   const [reports, setReports] = useState([])
   const [facilityReports, setFacilityReports] = useState([])
   const [filterType, setFilterType] = useState('snow') // 'snow' または 'facility'
@@ -270,12 +295,41 @@ function App() {
   const [title, setTitle] = useState('')
   const [facilityName, setFacilityName] = useState('')
   const [comment, setComment] = useState('')
+  const [startPoint, setStartPoint] = useState(null)
+  const [destinationPoint, setDestinationPoint] = useState(null)
+  const [destinationDetail, setDestinationDetail] = useState(null)
+  const [isDestinationDetailVisible, setIsDestinationDetailVisible] =
+    useState(true)
+  const [waypointList, setWaypointList] = useState([])
+  const [selectedNavigationStep, setSelectedNavigationStep] = useState(null)
+  const [routeDangerPosts, setRouteDangerPosts] = useState([])
+  const [hasCheckedRouteDanger, setHasCheckedRouteDanger] = useState(false)
+  const [isNavigationSetupOpen, setIsNavigationSetupOpen] = useState(false)
+  const [isNavigationStarted, setIsNavigationStarted] = useState(false)
+  const [navigationAlertMessage, setNavigationAlertMessage] = useState('')
+  const [placeSearchQuery, setPlaceSearchQuery] = useState('')
+  const [placeSearchResults, setPlaceSearchResults] = useState([])
+  const [placeSearchMessage, setPlaceSearchMessage] = useState('')
+  const [isSearchingPlace, setIsSearchingPlace] = useState(false)
+  const [isDestinationSearchOpen, setIsDestinationSearchOpen] =
+    useState(false)
+  const [placeSearchCache, setPlaceSearchCache] = useState({})
+  const [startSearchQuery, setStartSearchQuery] = useState('')
+  const [startSearchResults, setStartSearchResults] = useState([])
+  const [startSearchMessage, setStartSearchMessage] = useState('')
+  const [isStartSearchOpen, setIsStartSearchOpen] = useState(false)
+  const [isSearchingStart, setIsSearchingStart] = useState(false)
+  const [startSearchCache, setStartSearchCache] = useState({})
+  const [routeMode] = useState('pedestrian')
   const [formError, setFormError] = useState('')
   const [dataError, setDataError] = useState('')
   const [loadingReports, setLoadingReports] = useState(true)
   const [editingReportId, setEditingReportId] = useState(null)
   const [editingFacilityReportId, setEditingFacilityReportId] = useState(null)
 
+  const isPostMode = mode === 'post'
+  const isNavigationMode = mode === 'navigation'
+  const routeModeLabel = ROUTE_MODES[routeMode].label
   const trimmedTitle = title.trim()
   const trimmedComment = comment.trim()
   const trimmedFacilityName = facilityName.trim()
@@ -312,11 +366,26 @@ function App() {
           return
         }
 
+        snapshot.docs.forEach((reportDoc) => {
+          const missingFields = getMissingPassableReportFields(reportDoc.data())
+
+          if (Object.keys(missingFields).length > 0) {
+            updateDoc(doc(reportsCollection, reportDoc.id), missingFields).catch(
+              (error) => {
+                console.error(error)
+                setDataError('投稿データの更新に失敗しました。')
+              },
+            )
+          }
+        })
+
         setReports(
-          snapshot.docs.map((reportDoc) => ({
-            ...reportDoc.data(),
-            id: reportDoc.id,
-          })),
+          snapshot.docs.map((reportDoc) =>
+            applyPassableReportDefaults({
+              ...reportDoc.data(),
+              id: reportDoc.id,
+            }),
+          ),
         )
         setDataError('')
         setLoadingReports(false)
@@ -401,6 +470,7 @@ function App() {
 
     const newReportRef = doc(reportsCollection)
     const newReport = {
+      ...passableReportDefaults,
       id: newReportRef.id,
       title: trimmedTitle,
       area: '',
@@ -425,6 +495,7 @@ function App() {
   }
 
   const handleEditReport = (report) => {
+    setMode('post')
     setEditingReportId(report.id)
     setStatus(report.status)
     setTarget(report.target)
@@ -435,6 +506,59 @@ function App() {
       lng: report.lng,
     })
     setFormError('')
+  }
+
+  const handlePassableReport = (reportId) => {
+    const reportedAt = formatTokyoIso()
+    const targetReport = reports.find((report) => report.id === reportId)
+    const nextPassableReportCount =
+      (targetReport?.passableReportCount ?? 0) + 1
+    const shouldAutoResolve =
+      targetReport?.status !== 'cleared' && nextPassableReportCount >= 3
+
+    setReports((currentReports) =>
+      currentReports.map((report) => {
+        if (report.id !== reportId) {
+          return report
+        }
+
+        const passableReports = Array.isArray(report.passableReports)
+          ? report.passableReports
+          : []
+        const passableReportCount = (report.passableReportCount ?? 0) + 1
+        const isAutoResolved =
+          report.status !== 'cleared' && passableReportCount >= 3
+
+        return {
+          ...report,
+          status: isAutoResolved ? 'cleared' : report.status,
+          isResolved: isAutoResolved ? true : report.isResolved,
+          autoResolved: isAutoResolved ? true : report.autoResolved,
+          passableReportCount,
+          passableReports: [...passableReports, reportedAt],
+          updatedAt: isAutoResolved ? reportedAt : report.updatedAt,
+        }
+      }),
+    )
+
+    if (shouldAutoResolve) {
+      setRouteDangerPosts((currentRouteDangerPosts) =>
+        currentRouteDangerPosts.filter((report) => report.id !== reportId),
+      )
+    }
+
+    setPassableReportMessages((currentMessages) => ({
+      ...currentMessages,
+      [reportId]: '通行可能報告を送信しました',
+    }))
+
+    window.setTimeout(() => {
+      setPassableReportMessages((currentMessages) => {
+        const remainingMessages = { ...currentMessages }
+        delete remainingMessages[reportId]
+        return remainingMessages
+      })
+    }, 2500)
   }
 
   const handleDeleteReport = async (reportId) => {
@@ -609,7 +733,8 @@ function App() {
           {loadingReports && (
             <p className="data-status">投稿データを読み込んでいます。</p>
           )}
-          {dataError && <p className="form-error">{dataError}</p>}
+        </div>
+      )}
 
           {filterType === 'snow' ? (
             <form className="report-form" onSubmit={handleSubmit}>
@@ -634,62 +759,230 @@ function App() {
               </div>
             </fieldset>
 
-            <fieldset>
-              <legend>対象</legend>
-              <div className="option-grid target-option-grid">
-                {targetOptions.map((targetValue) => (
-                  <button
-                    className={`option-button target-option ${
-                      target === targetValue ? 'is-selected' : ''
-                    }`}
-                    key={targetValue}
-                    type="button"
-                    aria-pressed={target === targetValue}
-                    onClick={() => setTarget(targetValue)}
-                  >
-                    <span className="target-icon" aria-hidden="true">
-                      {targetIcons[targetValue]}
-                    </span>
-                    <span>{targetLabels[targetValue]}</span>
-                  </button>
-                ))}
-              </div>
-            </fieldset>
+              <label>
+                タイトル
+                <input
+                  type="text"
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                  required
+                />
+              </label>
 
-            <label>
-              タイトル
-              <input
-                type="text"
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                required
-              />
-            </label>
+              <label>
+                コメント
+                <textarea
+                  value={comment}
+                  onChange={(event) => setComment(event.target.value)}
+                  rows="5"
+                  required
+                />
+              </label>
 
-            <label>
-              コメント
-              <textarea
-                value={comment}
-                onChange={(event) => setComment(event.target.value)}
-                rows="5"
-                required
-              />
-            </label>
+              {formError && <p className="form-error">{formError}</p>}
 
-            {formError && <p className="form-error">{formError}</p>}
-
-            <div className="form-actions">
-              <button type="submit" disabled={isSubmitDisabled}>
-                {isEditing ? '更新する' : '投稿する'}
-              </button>
-              {isEditing && (
-                <button
-                  className="secondary-button"
-                  type="button"
-                  onClick={resetForm}
-                >
-                  キャンセル
+              <div className="form-actions">
+                <button type="submit" disabled={isSubmitDisabled}>
+                  {isEditing ? '更新する' : '投稿する'}
                 </button>
+                {isEditing && (
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={resetForm}
+                  >
+                    キャンセル
+                  </button>
+                )}
+              </div>
+            </form>
+          </section>
+        )}
+
+        {isNavigationMode && (
+          <section
+            className="form-panel navigation-panel"
+            aria-labelledby="navigation-title"
+          >
+            <h2 id="navigation-title">ナビゲーション設定</h2>
+            <p className="selected-position">
+              危険箇所を避けたい場合は、地図上で経由地を追加してください。
+            </p>
+
+            <div className="route-form">
+              <section className="navigation-section" aria-label="目的地詳細">
+                <dl className="navigation-point-list">
+                  <div>
+                    <dt>出発地</dt>
+                    <dd>{formatPoint(startPoint)}</dd>
+                  </div>
+                  <div>
+                    <dt>目的地</dt>
+                    <dd>{formatPoint(destinationPoint)}</dd>
+                  </div>
+                  <div>
+                    <dt>経由地</dt>
+                    <dd>
+                      {waypointList.length > 0
+                        ? `${waypointList.length}件`
+                        : '未選択'}
+                    </dd>
+                  </div>
+                </dl>
+
+                {waypointList.length > 0 && (
+                  <ol className="waypoint-list">
+                    {waypointList.map((waypoint, index) => (
+                      <li key={`${waypoint.lat}-${waypoint.lng}-${index}`}>
+                        <div>
+                          <strong>経由地 {index + 1}</strong>
+                          <span>{formatPoint(waypoint)}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteWaypoint(index)}
+                        >
+                          削除
+                        </button>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </section>
+
+              {isNavigationSetupOpen && (
+                <section
+                  className="navigation-section navigation-action-bar"
+                  aria-label="ナビゲーション設定バー"
+                >
+                  <p className="route-mode-label">{routeModeLabel}</p>
+
+                  <div
+                    className="option-grid navigation-step-grid"
+                    aria-label="ナビゲーション地点の入力対象"
+                  >
+                    <form
+                      className="start-search-form"
+                      onSubmit={handleSearchStartPlace}
+                    >
+                      <label>
+                        出発地
+                        <span className="place-search-input-row">
+                          <input
+                            type="search"
+                            value={startSearchQuery}
+                            onChange={(event) =>
+                              setStartSearchQuery(event.target.value)
+                            }
+                            onFocus={() => setIsStartSearchOpen(true)}
+                            placeholder="地名・施設名で検索"
+                          />
+                          <button type="submit" disabled={isSearchingStart}>
+                            {isSearchingStart ? '検索中...' : '検索'}
+                          </button>
+                        </span>
+                      </label>
+
+                      {isStartSearchOpen && (
+                        <div
+                          className="start-search-dropdown"
+                          aria-label="出発地候補"
+                        >
+                          <button
+                            className="start-search-dropdown-button"
+                            type="button"
+                            onClick={handleUseCurrentLocationAsStart}
+                          >
+                            <span>現在地を使用</span>
+                            <small>ブラウザの現在地を出発地にします</small>
+                          </button>
+                          <button
+                            className="start-search-dropdown-button"
+                            type="button"
+                            onClick={handleSelectMapStartInput}
+                          >
+                            <span>地図をタップして出発地を選択</span>
+                            <small>次にタップした地点を出発地にします</small>
+                          </button>
+
+                          {startSearchMessage && (
+                            <p className="place-search-message">
+                              {startSearchMessage}
+                            </p>
+                          )}
+
+                          {startSearchResults.length > 0 && (
+                            <div className="place-search-results">
+                              {startSearchResults.map((result) => {
+                                const { description, name } =
+                                  formatPlaceSearchResult(result)
+
+                                return (
+                                  <button
+                                    className="place-search-result-button"
+                                    key={result.place_id}
+                                    type="button"
+                                    onClick={() =>
+                                      handleSelectStartSearchResult(result)
+                                    }
+                                  >
+                                    <span>{name}</span>
+                                    <small>{description}</small>
+                                  </button>
+                                )
+                              })}
+                              <p className="place-search-attribution">
+                                Search results by OpenStreetMap Nominatim
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </form>
+                    <button
+                      className={`option-button navigation-step-button ${
+                        selectedNavigationStep === 'destination'
+                          ? 'is-selected'
+                          : ''
+                      }`}
+                      type="button"
+                      aria-pressed={selectedNavigationStep === 'destination'}
+                      onClick={() => setSelectedNavigationStep('destination')}
+                    >
+                      目的地を選択
+                    </button>
+                    <button
+                      className={`option-button navigation-step-button ${
+                        selectedNavigationStep === 'waypoint'
+                          ? 'is-selected'
+                          : ''
+                      }`}
+                      type="button"
+                      aria-pressed={selectedNavigationStep === 'waypoint'}
+                      onClick={() => setSelectedNavigationStep('waypoint')}
+                    >
+                      経由地を追加
+                    </button>
+                    <button
+                      className="option-button navigation-step-button navigation-clear-button"
+                      type="button"
+                      onClick={handleClearNavigation}
+                    >
+                      クリア
+                    </button>
+                    <button
+                      className="option-button navigation-step-button navigation-start-button"
+                      type="button"
+                      onClick={handleStartRouteNavigation}
+                    >
+                      ナビ開始
+                    </button>
+                  </div>
+                </section>
+              )}
+
+              {navigationAlertMessage && (
+                <p className="navigation-alert">{navigationAlertMessage}</p>
               )}
             </div>
             </form>
@@ -757,6 +1050,85 @@ function App() {
         </section>
 
         <section className="map-panel" aria-label="北陸地域の除雪情報マップ">
+          {isNavigationMode && (
+            <div className="destination-search-overlay">
+              <form
+                className="place-search-form map-place-search-form"
+                onSubmit={handleSearchPlace}
+              >
+                <label>
+                  目的地を検索
+                  <span className="place-search-input-row">
+                    <input
+                      type="search"
+                      value={placeSearchQuery}
+                      onChange={(event) =>
+                        setPlaceSearchQuery(event.target.value)
+                      }
+                      onFocus={() => setIsDestinationSearchOpen(true)}
+                      placeholder="例：金沢駅、富山県庁"
+                    />
+                    {(placeSearchQuery ||
+                      placeSearchMessage ||
+                      placeSearchResults.length > 0) && (
+                      <button
+                        className="place-search-clear-button"
+                        type="button"
+                        aria-label="目的地検索欄をクリア"
+                        onClick={handleClearDestinationSearch}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </span>
+                </label>
+                <button type="submit" disabled={isSearchingPlace}>
+                  {isSearchingPlace ? '検索中...' : '検索'}
+                </button>
+              </form>
+
+              {isDestinationSearchOpen &&
+                (placeSearchMessage || placeSearchResults.length > 0) && (
+                <div
+                  className="destination-search-popover"
+                  aria-label="目的地設定"
+                >
+                  {placeSearchMessage && (
+                    <p className="place-search-message">
+                      {placeSearchMessage}
+                    </p>
+                  )}
+
+                  {placeSearchResults.length > 0 && (
+                    <div className="place-search-results">
+                      {placeSearchResults.map((result) => {
+                        const { description, name } =
+                          formatPlaceSearchResult(result)
+
+                        return (
+                          <button
+                            className="place-search-result-button"
+                            key={result.place_id}
+                            type="button"
+                            onClick={() =>
+                              handleSelectPlaceSearchResult(result)
+                            }
+                          >
+                            <span>{name}</span>
+                            <small>{description}</small>
+                          </button>
+                        )
+                      })}
+                      <p className="place-search-attribution">
+                        Search results by OpenStreetMap Nominatim
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           <MapContainer
             center={[36.95, 137.55]}
             zoom={7}
@@ -772,7 +1144,7 @@ function App() {
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
 
-            {selectedPosition && (
+            {isPostMode && selectedPosition && (
               <Marker
                 position={[selectedPosition.lat, selectedPosition.lng]}
                 icon={selectedPositionIcon}
@@ -885,6 +1257,57 @@ function App() {
               ))}
           </MapContainer>
         </section>
+      </div>
+
+      {isNavigationMode && destinationDetail && isDestinationDetailVisible && (
+        <section
+          className="destination-detail-card"
+          aria-label="目的地詳細"
+        >
+          <button
+            className="destination-detail-close-button"
+            type="button"
+            aria-label="目的地詳細を閉じる"
+            onClick={handleCloseDestinationDetail}
+          >
+            ×
+          </button>
+
+          <div className="destination-detail-copy">
+            <p className="destination-detail-label">目的地</p>
+            <h2>{destinationDetail.name}</h2>
+            <p>{destinationDetail.description}</p>
+            <dl>
+              <div>
+                <dt>緯度</dt>
+                <dd>{destinationDetail.lat.toFixed(5)}</dd>
+              </div>
+              <div>
+                <dt>経度</dt>
+                <dd>{destinationDetail.lng.toFixed(5)}</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div className="destination-detail-actions">
+            <button type="button" onClick={handleOpenNavigationSetup}>
+              ナビゲーション設定を開く
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={handleAddFavorite}
+            >
+              お気に入りに追加
+            </button>
+          </div>
+        </section>
+      )}
+
+      <div className="mode-switcher" aria-label="表示モード切り替え">
+        <button type="button" onClick={handleToggleMode}>
+          {isNavigationMode ? '投稿モードに戻る' : 'ナビゲーション'}
+        </button>
       </div>
     </main>
   )

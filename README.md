@@ -1,16 +1,27 @@
-# React + Vite
+# Snow Map App
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+北陸地域の雪道・通行状況を地図で共有する React + Vite アプリです。
+Leaflet の地図上に投稿ピンを表示し、Firebase Firestore に投稿データを保存します。
 
-Currently, two official plugins are available:
+## 主な機能
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- 地図クリックで雪道情報を投稿
+- 投稿の編集・削除
+- 「通行可能」「通行注意」「積雪多い」「通行止め」「凍結注意」の状態表示
+- 車・歩行者・車と歩行者の対象区分
+- 投稿一覧と地図ピンの連動表示
+- 目的地検索、出発地設定、経由地つきルート表示
+- ルート付近の注意投稿チェック
+- 通行可能報告による自動解決
 
-## React Compiler
+## 使用技術
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- React
+- Vite
+- Leaflet / React Leaflet
+- Leaflet Routing Machine
+- Firebase Firestore
 
-## Expanding the ESLint configuration
+## Firebase 設定
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+Firestore には `snowReports` コレクションを使用します。初回起動時に投稿が空の場合は、サンプルデータを自動登録します。
