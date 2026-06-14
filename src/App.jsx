@@ -247,6 +247,20 @@ const formatPoint = (point) => {
   return `緯度 ${point.lat.toFixed(5)}、経度 ${point.lng.toFixed(5)}`
 }
 
+const formatPlaceSearchResult = (result) => {
+  const displayNameParts = (result.display_name ?? '')
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+  const name = result.name || displayNameParts[0] || '名称未設定の候補'
+  const description =
+    displayNameParts.filter((part) => part !== name).join('、') ||
+    [result.type, result.class].filter(Boolean).join(' / ') ||
+    '住所情報なし'
+
+  return { description, name }
+}
+
 const currentLocationErrorMessage =
   '現在地を取得できませんでした。地図をタップして出発地を選択してください。'
 
@@ -701,7 +715,7 @@ function App() {
       const cachedResults = placeSearchCache[trimmedQuery]
       setPlaceSearchResults(cachedResults)
       setPlaceSearchMessage(
-        cachedResults.length > 0 ? '' : '検索結果が見つかりませんでした。',
+        cachedResults.length > 0 ? '' : '候補が見つかりませんでした',
       )
       return
     }
@@ -734,7 +748,7 @@ function App() {
       }))
       setPlaceSearchResults(results)
       setPlaceSearchMessage(
-        results.length > 0 ? '' : '検索結果が見つかりませんでした。',
+        results.length > 0 ? '' : '候補が見つかりませんでした',
       )
     } catch (error) {
       console.error(error)
@@ -745,6 +759,13 @@ function App() {
     } finally {
       setIsSearchingPlace(false)
     }
+  }
+
+  const handleClearDestinationSearch = () => {
+    setPlaceSearchQuery('')
+    setPlaceSearchResults([])
+    setPlaceSearchMessage('')
+    setIsDestinationSearchOpen(false)
   }
 
   const handleSelectPlaceSearchResult = (result) => {
@@ -1056,13 +1077,29 @@ function App() {
               >
                 <label>
                   目的地を検索
-                  <input
-                    type="search"
-                    value={placeSearchQuery}
-                    onChange={(event) => setPlaceSearchQuery(event.target.value)}
-                    onFocus={() => setIsDestinationSearchOpen(true)}
-                    placeholder="例：金沢駅、富山県庁"
-                  />
+                  <span className="place-search-input-row">
+                    <input
+                      type="search"
+                      value={placeSearchQuery}
+                      onChange={(event) =>
+                        setPlaceSearchQuery(event.target.value)
+                      }
+                      onFocus={() => setIsDestinationSearchOpen(true)}
+                      placeholder="例：金沢駅、富山県庁"
+                    />
+                    {(placeSearchQuery ||
+                      placeSearchMessage ||
+                      placeSearchResults.length > 0) && (
+                      <button
+                        className="place-search-clear-button"
+                        type="button"
+                        aria-label="目的地検索欄をクリア"
+                        onClick={handleClearDestinationSearch}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </span>
                 </label>
                 <button type="submit" disabled={isSearchingPlace}>
                   {isSearchingPlace ? '検索中...' : '検索'}
@@ -1083,20 +1120,24 @@ function App() {
 
                   {placeSearchResults.length > 0 && (
                     <div className="place-search-results">
-                      {placeSearchResults.map((result) => (
-                        <button
-                          className="place-search-result-button"
-                          key={result.place_id}
-                          type="button"
-                          onClick={() => handleSelectPlaceSearchResult(result)}
-                        >
-                          <span>{result.display_name}</span>
-                          <small>
-                            緯度 {Number(result.lat).toFixed(5)}、経度{' '}
-                            {Number(result.lon).toFixed(5)}
-                          </small>
-                        </button>
-                      ))}
+                      {placeSearchResults.map((result) => {
+                        const { description, name } =
+                          formatPlaceSearchResult(result)
+
+                        return (
+                          <button
+                            className="place-search-result-button"
+                            key={result.place_id}
+                            type="button"
+                            onClick={() =>
+                              handleSelectPlaceSearchResult(result)
+                            }
+                          >
+                            <span>{name}</span>
+                            <small>{description}</small>
+                          </button>
+                        )
+                      })}
                       <p className="place-search-attribution">
                         Search results by OpenStreetMap Nominatim
                       </p>

@@ -260,6 +260,13 @@
   border-color: #1d7ed0;
 }
 
+.place-search-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 8px;
+  align-items: center;
+}
+
 .place-search-form button {
   min-height: 42px;
   border: 0;
@@ -269,6 +276,31 @@
   font: inherit;
   font-weight: 800;
   cursor: pointer;
+}
+
+.place-search-form .place-search-clear-button {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 34px;
+  width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--text-muted);
+  box-shadow: none;
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.place-search-form .place-search-clear-button:hover,
+.place-search-form .place-search-clear-button:focus-visible {
+  border-color: #d93939;
+  background: #fef2f2;
+  color: #b91c1c;
 }
 
 .place-search-form button:disabled {
@@ -309,15 +341,18 @@
 }
 
 .place-search-result-button span {
+  overflow-wrap: anywhere;
   font-size: 13px;
   font-weight: 800;
   line-height: 1.35;
 }
 
 .place-search-result-button small {
+  overflow-wrap: anywhere;
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 700;
+  line-height: 1.45;
 }
 
 .place-search-attribution {
