@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import L from 'leaflet'
 import {
   collection,
@@ -15,16 +15,19 @@ import {
   Marker,
   Popup,
   TileLayer,
+  useMap,
   useMapEvents,
 } from 'react-leaflet'
+import 'leaflet-routing-machine'
 import 'leaflet/dist/leaflet.css'
+import 'leaflet-routing-machine/dist/leaflet-routing-machine.css'
 import './App.css'
 import { db } from './firebase'
 
 const statusStyles = {
   cleared: {
     color: '#1dd02f',
-    label: '除雪済み',
+    label: '通行可能',
   },
   caution: {
     color: '#f59e0b',
@@ -169,11 +172,11 @@ const formatTokyoIso = (date = new Date()) => {
 
 const getMapStatus = (status) => mapStatusByReportStatus[status] ?? 'caution'
 
-const createStatusIcon = (status) => {
+const createStatusIcon = (status, { isRouteDanger = false } = {}) => {
   const { color, label } = mapStatusStyles[status]
 
   return L.divIcon({
-    className: 'snow-marker',
+    className: `snow-marker${isRouteDanger ? ' is-route-danger-marker' : ''}`,
     html: `<span aria-label="${label}" style="--marker-color: ${color}"></span>`,
     iconSize: [28, 28],
     iconAnchor: [14, 14],
@@ -188,6 +191,15 @@ const selectedPositionIcon = L.divIcon({
   iconAnchor: [16, 16],
   popupAnchor: [0, -18],
 })
+
+const createNavigationIcon = ({ color, label, text }) =>
+  L.divIcon({
+    className: 'navigation-marker',
+    html: `<span aria-label="${label}" style="--navigation-marker-color: ${color}">${text}</span>`,
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
+    popupAnchor: [0, -19],
+  })
 
 const reportsCollection = collection(db, 'snowReports')
 const reportsQuery = query(reportsCollection, orderBy('updatedAt', 'desc'))
@@ -205,23 +217,243 @@ function MapClickHandler({ onSelect }) {
   return null
 }
 
+function NavigationMapClickHandler({ onSelect }) {
+  useMapEvents({
+    click(event) {
+      onSelect({
+        lat: event.latlng.lat,
+        lng: event.latlng.lng,
+      })
+    },
+  })
+
+  return null
+}
+
+const formatPoint = (point) => {
+  if (!point) {
+    return '未選択'
+  }
+
+  return `緯度 ${point.lat.toFixed(5)}、経度 ${point.lng.toFixed(5)}`
+}
+
+const currentLocationErrorMessage =
+  '現在地を取得できませんでした。地図をタップして出発地を選択してください。'
+
+const routeErrorMessage =
+  'ルートを表示できませんでした。地点を変更して再度お試しください。'
+
+const ROUTE_MODES = {
+  pedestrian: {
+    label: '歩行者向けルート',
+    osrmProfile: 'foot',
+  },
+  car: {
+    label: '車向けルート',
+    osrmProfile: 'driving',
+  },
+}
+
+const OSRM_SERVICE_URL = 'https://router.project-osrm.org/route/v1'
+const DANGER_STATUSES = new Set(['caution', 'heavy_snow', 'blocked', 'icy'])
+const ROUTE_DANGER_DISTANCE_METERS = 50
+
+const normalizeLatLng = (point) => ({
+  lat: point.lat,
+  lng: point.lng ?? point.lon,
+})
+
+const projectPointToMeters = (point, origin) => {
+  const normalizedPoint = normalizeLatLng(point)
+  const normalizedOrigin = normalizeLatLng(origin)
+  const xDirection = normalizedPoint.lng >= normalizedOrigin.lng ? 1 : -1
+  const yDirection = normalizedPoint.lat >= normalizedOrigin.lat ? 1 : -1
+
+  return {
+    x:
+      L.latLng(normalizedOrigin.lat, normalizedOrigin.lng).distanceTo(
+        L.latLng(normalizedOrigin.lat, normalizedPoint.lng),
+      ) * xDirection,
+    y:
+      L.latLng(normalizedOrigin.lat, normalizedOrigin.lng).distanceTo(
+        L.latLng(normalizedPoint.lat, normalizedOrigin.lng),
+      ) * yDirection,
+  }
+}
+
+const getPointToSegmentDistanceMeters = (point, segmentStart, segmentEnd) => {
+  const projectedPoint = projectPointToMeters(point, segmentStart)
+  const projectedStart = { x: 0, y: 0 }
+  const projectedEnd = projectPointToMeters(segmentEnd, segmentStart)
+  const segmentX = projectedEnd.x - projectedStart.x
+  const segmentY = projectedEnd.y - projectedStart.y
+  const segmentLengthSquared = segmentX ** 2 + segmentY ** 2
+
+  if (segmentLengthSquared === 0) {
+    return L.latLng(point.lat, point.lng).distanceTo(
+      L.latLng(segmentStart.lat, segmentStart.lng),
+    )
+  }
+
+  const projectedRatio = Math.max(
+    0,
+    Math.min(
+      1,
+      ((projectedPoint.x - projectedStart.x) * segmentX +
+        (projectedPoint.y - projectedStart.y) * segmentY) /
+        segmentLengthSquared,
+    ),
+  )
+  const closestPoint = {
+    x: projectedStart.x + projectedRatio * segmentX,
+    y: projectedStart.y + projectedRatio * segmentY,
+  }
+
+  return Math.hypot(
+    projectedPoint.x - closestPoint.x,
+    projectedPoint.y - closestPoint.y,
+  )
+}
+
+const getPointToRouteDistanceMeters = (point, routeCoordinates) => {
+  if (routeCoordinates.length === 0) {
+    return Number.POSITIVE_INFINITY
+  }
+
+  if (routeCoordinates.length === 1) {
+    const routePoint = normalizeLatLng(routeCoordinates[0])
+    return L.latLng(point.lat, point.lng).distanceTo(
+      L.latLng(routePoint.lat, routePoint.lng),
+    )
+  }
+
+  return routeCoordinates
+    .slice(1)
+    .reduce((shortestDistance, coordinate, index) => {
+      const segmentStart = normalizeLatLng(routeCoordinates[index])
+      const segmentEnd = normalizeLatLng(coordinate)
+      const segmentDistance = getPointToSegmentDistanceMeters(
+        point,
+        segmentStart,
+        segmentEnd,
+      )
+
+      return Math.min(shortestDistance, segmentDistance)
+    }, Number.POSITIVE_INFINITY)
+}
+
+const getRouteDangerPosts = (reports, routeCoordinates) =>
+  reports.filter(
+    (report) =>
+      DANGER_STATUSES.has(report.status) &&
+      getPointToRouteDistanceMeters(report, routeCoordinates) <=
+        ROUTE_DANGER_DISTANCE_METERS,
+  )
+
+function RoutingMachine({
+  destinationPoint,
+  onRouteError,
+  onRouteFound,
+  routeMode,
+  startPoint,
+  waypointList,
+}) {
+  const map = useMap()
+
+  useEffect(() => {
+    if (!startPoint || !destinationPoint) {
+      return undefined
+    }
+
+    const waypoints = [startPoint, ...waypointList, destinationPoint].map(
+      (point) => L.latLng(point.lat, point.lng),
+    )
+
+    const handleRoutesFound = (event) => {
+      onRouteFound(event.routes[0]?.coordinates ?? [])
+    }
+
+    const routingControl = L.Routing.control({
+      addWaypoints: false,
+      createMarker: () => null,
+      draggableWaypoints: false,
+      fitSelectedRoutes: 'smart',
+      lineOptions: {
+        styles: [
+          { color: '#bfdbfe', opacity: 0.72, weight: 10 },
+          { color: '#1d4ed8', opacity: 0.88, weight: 6 },
+        ],
+      },
+      router: L.Routing.osrmv1({
+        profile: ROUTE_MODES[routeMode].osrmProfile,
+        serviceUrl: OSRM_SERVICE_URL,
+        timeout: 15000,
+      }),
+      routeWhileDragging: false,
+      show: false,
+      waypoints,
+    })
+      .on('routesfound', handleRoutesFound)
+      .on('routingerror', onRouteError)
+      .addTo(map)
+
+    return () => {
+      routingControl.off('routesfound', handleRoutesFound)
+      routingControl.off('routingerror', onRouteError)
+      map.removeControl(routingControl)
+    }
+  }, [
+    destinationPoint,
+    map,
+    onRouteError,
+    onRouteFound,
+    routeMode,
+    startPoint,
+    waypointList,
+  ])
+
+  return null
+}
+
 function App() {
+  const [mode, setMode] = useState('post')
   const [reports, setReports] = useState([])
   const [selectedPosition, setSelectedPosition] = useState(null)
   const [status, setStatus] = useState('caution')
   const [target, setTarget] = useState('car')
   const [title, setTitle] = useState('')
   const [comment, setComment] = useState('')
+  const [startPoint, setStartPoint] = useState(null)
+  const [destinationPoint, setDestinationPoint] = useState(null)
+  const [waypointList, setWaypointList] = useState([])
+  const [selectedNavigationStep, setSelectedNavigationStep] = useState(null)
+  const [routeDangerPosts, setRouteDangerPosts] = useState([])
+  const [hasCheckedRouteDanger, setHasCheckedRouteDanger] = useState(false)
+  const [navigationAlertMessage, setNavigationAlertMessage] = useState('')
+  const [placeSearchQuery, setPlaceSearchQuery] = useState('')
+  const [placeSearchResults, setPlaceSearchResults] = useState([])
+  const [placeSearchMessage, setPlaceSearchMessage] = useState('')
+  const [isSearchingPlace, setIsSearchingPlace] = useState(false)
+  const [placeSearchCache, setPlaceSearchCache] = useState({})
+  const [routeMode] = useState('pedestrian')
   const [formError, setFormError] = useState('')
   const [dataError, setDataError] = useState('')
   const [loadingReports, setLoadingReports] = useState(true)
   const [editingReportId, setEditingReportId] = useState(null)
 
+  const isPostMode = mode === 'post'
+  const isNavigationMode = mode === 'navigation'
+  const routeModeLabel = ROUTE_MODES[routeMode].label
   const trimmedTitle = title.trim()
   const trimmedComment = comment.trim()
   const isSubmitDisabled =
     !selectedPosition || !trimmedTitle || !trimmedComment
   const isEditing = editingReportId !== null
+  const routeDangerPostIds = useMemo(
+    () => new Set(routeDangerPosts.map((report) => report.id)),
+    [routeDangerPosts],
+  )
 
   useEffect(() => {
     const seedInitialReports = async () => {
@@ -340,6 +572,7 @@ function App() {
   }
 
   const handleEditReport = (report) => {
+    setMode('post')
     setEditingReportId(report.id)
     setStatus(report.status)
     setTarget(report.target)
@@ -370,6 +603,159 @@ function App() {
     }
   }
 
+  const handleToggleMode = () => {
+    setMode((currentMode) =>
+      currentMode === 'post' ? 'navigation' : 'post',
+    )
+    setFormError('')
+  }
+
+  const resetRouteDangerCheck = () => {
+    setRouteDangerPosts([])
+    setHasCheckedRouteDanger(false)
+  }
+
+  const handleSelectNavigationPoint = (point) => {
+    resetRouteDangerCheck()
+
+    if (selectedNavigationStep === 'start') {
+      setStartPoint(point)
+      return
+    }
+
+    if (selectedNavigationStep === 'destination') {
+      setDestinationPoint(point)
+      return
+    }
+
+    if (selectedNavigationStep === 'waypoint') {
+      setWaypointList((currentWaypointList) => [
+        ...currentWaypointList,
+        point,
+      ])
+    }
+  }
+
+  const handleClearNavigation = () => {
+    setStartPoint(null)
+    setDestinationPoint(null)
+    setWaypointList([])
+    setSelectedNavigationStep(null)
+    setRouteDangerPosts([])
+    setHasCheckedRouteDanger(false)
+    setNavigationAlertMessage('')
+  }
+
+  const handleDeleteWaypoint = (waypointIndex) => {
+    resetRouteDangerCheck()
+    setWaypointList((currentWaypointList) =>
+      currentWaypointList.filter((_, index) => index !== waypointIndex),
+    )
+  }
+
+  const handleRouteFound = useCallback((routeCoordinates) => {
+    setRouteDangerPosts(getRouteDangerPosts(reports, routeCoordinates))
+    setHasCheckedRouteDanger(true)
+    setNavigationAlertMessage('')
+  }, [reports])
+
+  const handleRouteError = useCallback(() => {
+    setRouteDangerPosts([])
+    setHasCheckedRouteDanger(false)
+    setNavigationAlertMessage(routeErrorMessage)
+  }, [])
+
+  const handleSearchPlace = async (event) => {
+    event.preventDefault()
+
+    const trimmedQuery = placeSearchQuery.trim()
+
+    if (!trimmedQuery) {
+      setPlaceSearchResults([])
+      setPlaceSearchMessage('検索キーワードを入力してください。')
+      return
+    }
+
+    if (placeSearchCache[trimmedQuery]) {
+      const cachedResults = placeSearchCache[trimmedQuery]
+      setPlaceSearchResults(cachedResults)
+      setPlaceSearchMessage(
+        cachedResults.length > 0 ? '' : '検索結果が見つかりませんでした。',
+      )
+      return
+    }
+
+    const searchParams = new URLSearchParams({
+      q: trimmedQuery,
+      format: 'jsonv2',
+      limit: '5',
+      countrycodes: 'jp',
+      'accept-language': 'ja',
+      addressdetails: '1',
+    })
+
+    setIsSearchingPlace(true)
+    setPlaceSearchMessage('')
+
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?${searchParams.toString()}`,
+      )
+
+      if (!response.ok) {
+        throw new Error('Failed to search place')
+      }
+
+      const results = await response.json()
+      setPlaceSearchCache((currentCache) => ({
+        ...currentCache,
+        [trimmedQuery]: results,
+      }))
+      setPlaceSearchResults(results)
+      setPlaceSearchMessage(
+        results.length > 0 ? '' : '検索結果が見つかりませんでした。',
+      )
+    } catch (error) {
+      console.error(error)
+      setPlaceSearchResults([])
+      setPlaceSearchMessage(
+        '場所検索に失敗しました。時間をおいて再度お試しください。',
+      )
+    } finally {
+      setIsSearchingPlace(false)
+    }
+  }
+
+  const handleSelectPlaceSearchResult = (result) => {
+    resetRouteDangerCheck()
+    setDestinationPoint({
+      lat: Number(result.lat),
+      lng: Number(result.lon),
+    })
+    setPlaceSearchMessage('')
+  }
+
+  const handleUseCurrentLocationAsStart = () => {
+    if (!navigator.geolocation) {
+      setNavigationAlertMessage(currentLocationErrorMessage)
+      return
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        resetRouteDangerCheck()
+        setStartPoint({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        })
+        setNavigationAlertMessage('')
+      },
+      () => {
+        setNavigationAlertMessage(currentLocationErrorMessage)
+      },
+    )
+  }
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -394,105 +780,281 @@ function App() {
         </ul>
       </header>
 
-      <div className="content-grid">
-        <section className="form-panel" aria-labelledby="post-form-title">
-          <h2 id="post-form-title">
-            {isEditing ? '投稿を編集' : '除雪状況を投稿'}
-          </h2>
-          <p className="selected-position">
-            {selectedPosition
-              ? `選択中の位置：緯度 ${selectedPosition.lat.toFixed(
-                  5,
-                )}、経度 ${selectedPosition.lng.toFixed(5)}`
-              : '地図をクリックして投稿地点を選択してください'}
-          </p>
-          {loadingReports && (
-            <p className="data-status">投稿データを読み込んでいます。</p>
+      {hasCheckedRouteDanger && (
+        <div
+          className={`route-alert-bar ${
+            routeDangerPosts.length > 0 ? 'is-danger' : 'is-clear'
+          }`}
+          role="status"
+        >
+          {routeDangerPosts.length > 0 ? (
+            <>
+              <strong>
+                現在のルート付近に危険箇所が{routeDangerPosts.length}
+                件あります
+              </strong>
+              <span>
+                経由地を追加すると、危険箇所を避けられる場合があります
+              </span>
+            </>
+          ) : (
+            <strong>現在のルート付近に危険投稿はありません</strong>
           )}
-          {dataError && <p className="form-error">{dataError}</p>}
+        </div>
+      )}
 
-          <form className="report-form" onSubmit={handleSubmit}>
-            <fieldset>
-              <legend>状態</legend>
-              <div className="option-grid status-option-grid">
-                {Object.entries(statusStyles).map(([statusValue, style]) => (
-                  <button
-                    className={`option-button ${
-                      status === statusValue ? 'is-selected' : ''
-                    }`}
-                    key={statusValue}
-                    type="button"
-                    aria-pressed={status === statusValue}
-                    style={{ '--option-color': style.color }}
-                    onClick={() => setStatus(statusValue)}
-                  >
-                    <span className="option-icon" aria-hidden="true" />
-                    <span>{style.label}</span>
-                  </button>
-                ))}
-              </div>
-            </fieldset>
+      <div className="content-grid">
+        {isPostMode && (
+          <section className="form-panel" aria-labelledby="post-form-title">
+            <h2 id="post-form-title">
+              {isEditing ? '投稿を編集' : '除雪状況を投稿'}
+            </h2>
+            <p className="selected-position">
+              {selectedPosition
+                ? `選択中の位置：緯度 ${selectedPosition.lat.toFixed(
+                    5,
+                  )}、経度 ${selectedPosition.lng.toFixed(5)}`
+                : '地図をクリックして投稿地点を選択してください'}
+            </p>
+            {loadingReports && (
+              <p className="data-status">投稿データを読み込んでいます。</p>
+            )}
+            {dataError && <p className="form-error">{dataError}</p>}
 
-            <fieldset>
-              <legend>対象</legend>
-              <div className="option-grid target-option-grid">
-                {targetOptions.map((targetValue) => (
-                  <button
-                    className={`option-button target-option ${
-                      target === targetValue ? 'is-selected' : ''
-                    }`}
-                    key={targetValue}
-                    type="button"
-                    aria-pressed={target === targetValue}
-                    onClick={() => setTarget(targetValue)}
-                  >
-                    <span className="target-icon" aria-hidden="true">
-                      {targetIcons[targetValue]}
-                    </span>
-                    <span>{targetLabels[targetValue]}</span>
-                  </button>
-                ))}
-              </div>
-            </fieldset>
+            <form className="report-form" onSubmit={handleSubmit}>
+              <fieldset>
+                <legend>状態</legend>
+                <div className="option-grid status-option-grid">
+                  {Object.entries(statusStyles).map(([statusValue, style]) => (
+                    <button
+                      className={`option-button ${
+                        status === statusValue ? 'is-selected' : ''
+                      }`}
+                      key={statusValue}
+                      type="button"
+                      aria-pressed={status === statusValue}
+                      style={{ '--option-color': style.color }}
+                      onClick={() => setStatus(statusValue)}
+                    >
+                      <span className="option-icon" aria-hidden="true" />
+                      <span>{style.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
 
-            <label>
-              タイトル
-              <input
-                type="text"
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                required
-              />
-            </label>
+              <fieldset>
+                <legend>対象</legend>
+                <div className="option-grid target-option-grid">
+                  {targetOptions.map((targetValue) => (
+                    <button
+                      className={`option-button target-option ${
+                        target === targetValue ? 'is-selected' : ''
+                      }`}
+                      key={targetValue}
+                      type="button"
+                      aria-pressed={target === targetValue}
+                      onClick={() => setTarget(targetValue)}
+                    >
+                      <span className="target-icon" aria-hidden="true">
+                        {targetIcons[targetValue]}
+                      </span>
+                      <span>{targetLabels[targetValue]}</span>
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
 
-            <label>
-              コメント
-              <textarea
-                value={comment}
-                onChange={(event) => setComment(event.target.value)}
-                rows="5"
-                required
-              />
-            </label>
+              <label>
+                タイトル
+                <input
+                  type="text"
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                  required
+                />
+              </label>
 
-            {formError && <p className="form-error">{formError}</p>}
+              <label>
+                コメント
+                <textarea
+                  value={comment}
+                  onChange={(event) => setComment(event.target.value)}
+                  rows="5"
+                  required
+                />
+              </label>
 
-            <div className="form-actions">
-              <button type="submit" disabled={isSubmitDisabled}>
-                {isEditing ? '更新する' : '投稿する'}
-              </button>
-              {isEditing && (
-                <button
-                  className="secondary-button"
-                  type="button"
-                  onClick={resetForm}
-                >
-                  キャンセル
+              {formError && <p className="form-error">{formError}</p>}
+
+              <div className="form-actions">
+                <button type="submit" disabled={isSubmitDisabled}>
+                  {isEditing ? '更新する' : '投稿する'}
                 </button>
+                {isEditing && (
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={resetForm}
+                  >
+                    キャンセル
+                  </button>
+                )}
+              </div>
+            </form>
+          </section>
+        )}
+
+        {isNavigationMode && (
+          <section className="form-panel" aria-labelledby="navigation-title">
+            <h2 id="navigation-title">ナビゲーション設定</h2>
+            <p className="selected-position">
+              危険箇所を避けたい場合は、地図上で経由地を追加してください。
+            </p>
+
+            <div className="route-form">
+              <p className="route-mode-label">{routeModeLabel}</p>
+
+              <form className="place-search-form" onSubmit={handleSearchPlace}>
+                <label>
+                  目的地を検索
+                  <input
+                    type="search"
+                    value={placeSearchQuery}
+                    onChange={(event) =>
+                      setPlaceSearchQuery(event.target.value)
+                    }
+                    placeholder="例：金沢駅、富山県庁"
+                  />
+                </label>
+                <button type="submit" disabled={isSearchingPlace}>
+                  {isSearchingPlace ? '検索中...' : '検索'}
+                </button>
+              </form>
+
+              {placeSearchMessage && (
+                <p className="place-search-message">{placeSearchMessage}</p>
               )}
+
+              {placeSearchResults.length > 0 && (
+                <div className="place-search-results">
+                  {placeSearchResults.map((result) => (
+                    <button
+                      className="place-search-result-button"
+                      key={result.place_id}
+                      type="button"
+                      onClick={() => handleSelectPlaceSearchResult(result)}
+                    >
+                      <span>{result.display_name}</span>
+                      <small>
+                        緯度 {Number(result.lat).toFixed(5)}、経度{' '}
+                        {Number(result.lon).toFixed(5)}
+                      </small>
+                    </button>
+                  ))}
+                  <p className="place-search-attribution">
+                    Search results by OpenStreetMap Nominatim
+                  </p>
+                </div>
+              )}
+
+              <div
+                className="option-grid navigation-step-grid"
+                aria-label="ナビゲーション地点の入力対象"
+              >
+                <button
+                  className={`option-button navigation-step-button ${
+                    selectedNavigationStep === 'start' ? 'is-selected' : ''
+                  }`}
+                  type="button"
+                  aria-pressed={selectedNavigationStep === 'start'}
+                  onClick={() => setSelectedNavigationStep('start')}
+                >
+                  出発地を選択
+                </button>
+                <button
+                  className="option-button navigation-step-button navigation-current-location-button"
+                  type="button"
+                  onClick={handleUseCurrentLocationAsStart}
+                >
+                  現在地を出発地にする
+                </button>
+                <button
+                  className={`option-button navigation-step-button ${
+                    selectedNavigationStep === 'destination'
+                      ? 'is-selected'
+                      : ''
+                  }`}
+                  type="button"
+                  aria-pressed={selectedNavigationStep === 'destination'}
+                  onClick={() => setSelectedNavigationStep('destination')}
+                >
+                  目的地を選択
+                </button>
+                <button
+                  className={`option-button navigation-step-button ${
+                    selectedNavigationStep === 'waypoint' ? 'is-selected' : ''
+                  }`}
+                  type="button"
+                  aria-pressed={selectedNavigationStep === 'waypoint'}
+                  onClick={() => setSelectedNavigationStep('waypoint')}
+                >
+                  経由地を追加
+                </button>
+                <button
+                  className="option-button navigation-step-button navigation-clear-button"
+                  type="button"
+                  onClick={handleClearNavigation}
+                >
+                  クリア
+                </button>
+              </div>
+
+              <dl className="navigation-point-list">
+                <div>
+                  <dt>出発地</dt>
+                  <dd>{formatPoint(startPoint)}</dd>
+                </div>
+                <div>
+                  <dt>目的地</dt>
+                  <dd>{formatPoint(destinationPoint)}</dd>
+                </div>
+                <div>
+                  <dt>経由地</dt>
+                  <dd>
+                    {waypointList.length > 0
+                      ? `${waypointList.length}件`
+                      : '未選択'}
+                  </dd>
+                </div>
+              </dl>
+
+              {waypointList.length > 0 && (
+                <ol className="waypoint-list">
+                  {waypointList.map((waypoint, index) => (
+                    <li key={`${waypoint.lat}-${waypoint.lng}-${index}`}>
+                      <div>
+                        <strong>経由地 {index + 1}</strong>
+                        <span>{formatPoint(waypoint)}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteWaypoint(index)}
+                      >
+                        削除
+                      </button>
+                    </li>
+                  ))}
+                </ol>
+              )}
+
+              {navigationAlertMessage && (
+                <p className="navigation-alert">{navigationAlertMessage}</p>
+              )}
+
             </div>
-          </form>
-        </section>
+          </section>
+        )}
 
         <section className="map-panel" aria-label="北陸地域の除雪情報マップ">
           <MapContainer
@@ -502,7 +1064,22 @@ function App() {
             scrollWheelZoom
             className="snow-map"
           >
-            <MapClickHandler onSelect={setSelectedPosition} />
+            {isPostMode && <MapClickHandler onSelect={setSelectedPosition} />}
+            {isNavigationMode && (
+              <NavigationMapClickHandler
+                onSelect={handleSelectNavigationPoint}
+              />
+            )}
+            {isNavigationMode && startPoint && destinationPoint && (
+              <RoutingMachine
+                destinationPoint={destinationPoint}
+                onRouteError={handleRouteError}
+                onRouteFound={handleRouteFound}
+                routeMode={routeMode}
+                startPoint={startPoint}
+                waypointList={waypointList}
+              />
+            )}
 
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -516,11 +1093,48 @@ function App() {
               />
             )}
 
+            {isNavigationMode && startPoint && (
+              <Marker
+                position={[startPoint.lat, startPoint.lng]}
+                icon={createNavigationIcon({
+                  color: '#2563eb',
+                  label: '出発地',
+                  text: 'S',
+                })}
+              />
+            )}
+
+            {isNavigationMode && destinationPoint && (
+              <Marker
+                position={[destinationPoint.lat, destinationPoint.lng]}
+                icon={createNavigationIcon({
+                  color: '#16a34a',
+                  label: '目的地',
+                  text: 'G',
+                })}
+              />
+            )}
+
+            {isNavigationMode &&
+              waypointList.map((waypoint, index) => (
+                <Marker
+                  key={`${waypoint.lat}-${waypoint.lng}-${index}`}
+                  position={[waypoint.lat, waypoint.lng]}
+                  icon={createNavigationIcon({
+                    color: '#d97706',
+                    label: `経由地 ${index + 1}`,
+                    text: String(index + 1),
+                  })}
+                />
+              ))}
+
             {reports.map((report) => (
               <Marker
                 key={report.id}
                 position={[report.lat, report.lng]}
-                icon={createStatusIcon(getMapStatus(report.status))}
+                icon={createStatusIcon(getMapStatus(report.status), {
+                  isRouteDanger: routeDangerPostIds.has(report.id),
+                })}
               >
                 <Popup>
                   <article className="report-popup">
@@ -575,6 +1189,12 @@ function App() {
             ))}
           </MapContainer>
         </section>
+      </div>
+
+      <div className="mode-switcher" aria-label="表示モード切り替え">
+        <button type="button" onClick={handleToggleMode}>
+          {isNavigationMode ? '投稿モードに戻る' : 'ナビゲーション'}
+        </button>
       </div>
     </main>
   )
