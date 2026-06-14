@@ -261,6 +261,13 @@ const formatPlaceSearchResult = (result) => {
   return { description, name }
 }
 
+const createMapDestinationDetail = (point) => ({
+  description: '地図上で指定した地点',
+  lat: point.lat,
+  lng: point.lng,
+  name: '地図で選択した目的地',
+})
+
 const currentLocationErrorMessage =
   '現在地を取得できませんでした。地図をタップして出発地を選択してください。'
 
@@ -449,10 +456,14 @@ function App() {
   const [comment, setComment] = useState('')
   const [startPoint, setStartPoint] = useState(null)
   const [destinationPoint, setDestinationPoint] = useState(null)
+  const [destinationDetail, setDestinationDetail] = useState(null)
+  const [isDestinationDetailVisible, setIsDestinationDetailVisible] =
+    useState(true)
   const [waypointList, setWaypointList] = useState([])
   const [selectedNavigationStep, setSelectedNavigationStep] = useState(null)
   const [routeDangerPosts, setRouteDangerPosts] = useState([])
   const [hasCheckedRouteDanger, setHasCheckedRouteDanger] = useState(false)
+  const [isNavigationStarted, setIsNavigationStarted] = useState(false)
   const [navigationAlertMessage, setNavigationAlertMessage] = useState('')
   const [placeSearchQuery, setPlaceSearchQuery] = useState('')
   const [placeSearchResults, setPlaceSearchResults] = useState([])
@@ -636,6 +647,8 @@ function App() {
         setNavigationAlertMessage('')
         setSelectedNavigationStep(null)
         setIsDestinationSearchOpen(false)
+        setIsNavigationStarted(false)
+        setIsDestinationDetailVisible(false)
         return 'post'
       }
 
@@ -649,8 +662,13 @@ function App() {
     setHasCheckedRouteDanger(false)
   }
 
-  const handleSelectNavigationPoint = (point) => {
+  const resetStartedNavigation = () => {
+    setIsNavigationStarted(false)
     resetRouteDangerCheck()
+  }
+
+  const handleSelectNavigationPoint = (point) => {
+    resetStartedNavigation()
 
     if (selectedNavigationStep === 'start') {
       setStartPoint(point)
@@ -659,6 +677,8 @@ function App() {
 
     if (selectedNavigationStep === 'destination') {
       setDestinationPoint(point)
+      setDestinationDetail(createMapDestinationDetail(point))
+      setIsDestinationDetailVisible(true)
       return
     }
 
@@ -673,15 +693,18 @@ function App() {
   const handleClearNavigation = () => {
     setStartPoint(null)
     setDestinationPoint(null)
+    setDestinationDetail(null)
+    setIsDestinationDetailVisible(false)
     setWaypointList([])
     setSelectedNavigationStep(null)
     setRouteDangerPosts([])
     setHasCheckedRouteDanger(false)
+    setIsNavigationStarted(false)
     setNavigationAlertMessage('')
   }
 
   const handleDeleteWaypoint = (waypointIndex) => {
-    resetRouteDangerCheck()
+    resetStartedNavigation()
     setWaypointList((currentWaypointList) =>
       currentWaypointList.filter((_, index) => index !== waypointIndex),
     )
@@ -769,14 +792,45 @@ function App() {
   }
 
   const handleSelectPlaceSearchResult = (result) => {
-    resetRouteDangerCheck()
-    setDestinationPoint({
+    const { description, name } = formatPlaceSearchResult(result)
+    const destination = {
       lat: Number(result.lat),
       lng: Number(result.lon),
+    }
+
+    resetStartedNavigation()
+    setDestinationPoint({
+      lat: destination.lat,
+      lng: destination.lng,
     })
+    setDestinationDetail({
+      description,
+      lat: destination.lat,
+      lng: destination.lng,
+      name,
+    })
+    setIsDestinationDetailVisible(true)
     setSelectedNavigationStep(null)
     setIsDestinationSearchOpen(false)
     setPlaceSearchMessage('')
+  }
+
+  const handleStartNavigation = () => {
+    if (!startPoint || !destinationPoint) {
+      setNavigationAlertMessage('出発地を設定してください。')
+      return
+    }
+
+    setNavigationAlertMessage('')
+    setIsNavigationStarted(true)
+  }
+
+  const handleAddFavorite = () => {
+    setNavigationAlertMessage('お気に入り機能は今後対応予定です。')
+  }
+
+  const handleCloseDestinationDetail = () => {
+    setIsDestinationDetailVisible(false)
   }
 
   const handleUseCurrentLocationAsStart = () => {
@@ -787,7 +841,7 @@ function App() {
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        resetRouteDangerCheck()
+        resetStartedNavigation()
         setStartPoint({
           lat: position.coords.latitude,
           lng: position.coords.longitude,
@@ -1161,7 +1215,10 @@ function App() {
                 onSelect={handleSelectNavigationPoint}
               />
             )}
-            {isNavigationMode && startPoint && destinationPoint && (
+            {isNavigationMode &&
+              isNavigationStarted &&
+              startPoint &&
+              destinationPoint && (
               <RoutingMachine
                 destinationPoint={destinationPoint}
                 onRouteError={handleRouteError}
@@ -1203,6 +1260,9 @@ function App() {
                   label: '目的地',
                   text: 'G',
                 })}
+                eventHandlers={{
+                  click: () => setIsDestinationSearchOpen(false),
+                }}
               />
             )}
 
@@ -1286,6 +1346,51 @@ function App() {
           </MapContainer>
         </section>
       </div>
+
+      {isNavigationMode && destinationDetail && isDestinationDetailVisible && (
+        <section
+          className="destination-detail-card"
+          aria-label="目的地詳細"
+        >
+          <button
+            className="destination-detail-close-button"
+            type="button"
+            aria-label="目的地詳細を閉じる"
+            onClick={handleCloseDestinationDetail}
+          >
+            ×
+          </button>
+
+          <div className="destination-detail-copy">
+            <p className="destination-detail-label">目的地</p>
+            <h2>{destinationDetail.name}</h2>
+            <p>{destinationDetail.description}</p>
+            <dl>
+              <div>
+                <dt>緯度</dt>
+                <dd>{destinationDetail.lat.toFixed(5)}</dd>
+              </div>
+              <div>
+                <dt>経度</dt>
+                <dd>{destinationDetail.lng.toFixed(5)}</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div className="destination-detail-actions">
+            <button type="button" onClick={handleStartNavigation}>
+              ナビゲーションを開始
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={handleAddFavorite}
+            >
+              お気に入りに追加
+            </button>
+          </div>
+        </section>
+      )}
 
       <div className="mode-switcher" aria-label="表示モード切り替え">
         <button type="button" onClick={handleToggleMode}>
