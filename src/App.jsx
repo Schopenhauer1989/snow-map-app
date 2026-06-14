@@ -444,6 +444,8 @@ function App() {
   const [placeSearchResults, setPlaceSearchResults] = useState([])
   const [placeSearchMessage, setPlaceSearchMessage] = useState('')
   const [isSearchingPlace, setIsSearchingPlace] = useState(false)
+  const [isDestinationSearchOpen, setIsDestinationSearchOpen] =
+    useState(false)
   const [placeSearchCache, setPlaceSearchCache] = useState({})
   const [routeMode] = useState('pedestrian')
   const [formError, setFormError] = useState('')
@@ -619,6 +621,7 @@ function App() {
         setHasCheckedRouteDanger(false)
         setNavigationAlertMessage('')
         setSelectedNavigationStep(null)
+        setIsDestinationSearchOpen(false)
         return 'post'
       }
 
@@ -684,6 +687,7 @@ function App() {
 
   const handleSearchPlace = async (event) => {
     event.preventDefault()
+    setIsDestinationSearchOpen(true)
 
     const trimmedQuery = placeSearchQuery.trim()
 
@@ -749,6 +753,8 @@ function App() {
       lat: Number(result.lat),
       lng: Number(result.lon),
     })
+    setSelectedNavigationStep(null)
+    setIsDestinationSearchOpen(false)
     setPlaceSearchMessage('')
   }
 
@@ -933,59 +939,6 @@ function App() {
             </p>
 
             <div className="route-form">
-              <section className="navigation-section" aria-label="目的地検索">
-                <form
-                  className="place-search-form"
-                  onSubmit={handleSearchPlace}
-                >
-                  <label>
-                    目的地を検索
-                    <input
-                      type="search"
-                      value={placeSearchQuery}
-                      onChange={(event) =>
-                        setPlaceSearchQuery(event.target.value)
-                      }
-                      placeholder="例：金沢駅、富山県庁"
-                    />
-                  </label>
-                  <button type="submit" disabled={isSearchingPlace}>
-                    {isSearchingPlace ? '検索中...' : '検索'}
-                  </button>
-                </form>
-
-                {placeSearchMessage && (
-                  <p className="place-search-message">{placeSearchMessage}</p>
-                )}
-              </section>
-
-              {placeSearchResults.length > 0 && (
-                <section
-                  className="navigation-section"
-                  aria-label="目的地候補"
-                >
-                  <div className="place-search-results">
-                    {placeSearchResults.map((result) => (
-                      <button
-                        className="place-search-result-button"
-                        key={result.place_id}
-                        type="button"
-                        onClick={() => handleSelectPlaceSearchResult(result)}
-                      >
-                        <span>{result.display_name}</span>
-                        <small>
-                          緯度 {Number(result.lat).toFixed(5)}、経度{' '}
-                          {Number(result.lon).toFixed(5)}
-                        </small>
-                      </button>
-                    ))}
-                    <p className="place-search-attribution">
-                      Search results by OpenStreetMap Nominatim
-                    </p>
-                  </div>
-                </section>
-              )}
-
               <section className="navigation-section" aria-label="目的地詳細">
                 <dl className="navigation-point-list">
                   <div>
@@ -1095,6 +1048,65 @@ function App() {
         )}
 
         <section className="map-panel" aria-label="北陸地域の除雪情報マップ">
+          {isNavigationMode && (
+            <div className="destination-search-overlay">
+              <form
+                className="place-search-form map-place-search-form"
+                onSubmit={handleSearchPlace}
+              >
+                <label>
+                  目的地を検索
+                  <input
+                    type="search"
+                    value={placeSearchQuery}
+                    onChange={(event) => setPlaceSearchQuery(event.target.value)}
+                    onFocus={() => setIsDestinationSearchOpen(true)}
+                    placeholder="例：金沢駅、富山県庁"
+                  />
+                </label>
+                <button type="submit" disabled={isSearchingPlace}>
+                  {isSearchingPlace ? '検索中...' : '検索'}
+                </button>
+              </form>
+
+              {isDestinationSearchOpen &&
+                (placeSearchMessage || placeSearchResults.length > 0) && (
+                <div
+                  className="destination-search-popover"
+                  aria-label="目的地設定"
+                >
+                  {placeSearchMessage && (
+                    <p className="place-search-message">
+                      {placeSearchMessage}
+                    </p>
+                  )}
+
+                  {placeSearchResults.length > 0 && (
+                    <div className="place-search-results">
+                      {placeSearchResults.map((result) => (
+                        <button
+                          className="place-search-result-button"
+                          key={result.place_id}
+                          type="button"
+                          onClick={() => handleSelectPlaceSearchResult(result)}
+                        >
+                          <span>{result.display_name}</span>
+                          <small>
+                            緯度 {Number(result.lat).toFixed(5)}、経度{' '}
+                            {Number(result.lon).toFixed(5)}
+                          </small>
+                        </button>
+                      ))}
+                      <p className="place-search-attribution">
+                        Search results by OpenStreetMap Nominatim
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           <MapContainer
             center={[36.95, 137.55]}
             zoom={7}
