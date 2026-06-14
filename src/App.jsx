@@ -463,6 +463,7 @@ function App() {
   const [selectedNavigationStep, setSelectedNavigationStep] = useState(null)
   const [routeDangerPosts, setRouteDangerPosts] = useState([])
   const [hasCheckedRouteDanger, setHasCheckedRouteDanger] = useState(false)
+  const [isNavigationSetupOpen, setIsNavigationSetupOpen] = useState(false)
   const [isNavigationStarted, setIsNavigationStarted] = useState(false)
   const [navigationAlertMessage, setNavigationAlertMessage] = useState('')
   const [placeSearchQuery, setPlaceSearchQuery] = useState('')
@@ -472,6 +473,12 @@ function App() {
   const [isDestinationSearchOpen, setIsDestinationSearchOpen] =
     useState(false)
   const [placeSearchCache, setPlaceSearchCache] = useState({})
+  const [startSearchQuery, setStartSearchQuery] = useState('')
+  const [startSearchResults, setStartSearchResults] = useState([])
+  const [startSearchMessage, setStartSearchMessage] = useState('')
+  const [isStartSearchOpen, setIsStartSearchOpen] = useState(false)
+  const [isSearchingStart, setIsSearchingStart] = useState(false)
+  const [startSearchCache, setStartSearchCache] = useState({})
   const [routeMode] = useState('pedestrian')
   const [formError, setFormError] = useState('')
   const [dataError, setDataError] = useState('')
@@ -647,6 +654,7 @@ function App() {
         setNavigationAlertMessage('')
         setSelectedNavigationStep(null)
         setIsDestinationSearchOpen(false)
+        setIsNavigationSetupOpen(false)
         setIsNavigationStarted(false)
         setIsDestinationDetailVisible(false)
         return 'post'
@@ -667,27 +675,47 @@ function App() {
     resetRouteDangerCheck()
   }
 
-  const handleSelectNavigationPoint = (point) => {
-    resetStartedNavigation()
+  const handleOpenNavigationSetup = () => {
+    setIsNavigationSetupOpen(true)
+    setNavigationAlertMessage('')
+  }
 
-    if (selectedNavigationStep === 'start') {
-      setStartPoint(point)
-      return
+  const handleSetStartPoint = (point) => {
+    if (isNavigationStarted) {
+      resetRouteDangerCheck()
+    } else {
+      resetStartedNavigation()
     }
 
-    if (selectedNavigationStep === 'destination') {
-      setDestinationPoint(point)
-      setDestinationDetail(createMapDestinationDetail(point))
-      setIsDestinationDetailVisible(true)
+    setStartPoint(point)
+    setSelectedNavigationStep(null)
+    setIsStartSearchOpen(false)
+    setStartSearchMessage('')
+    setNavigationAlertMessage('')
+  }
+
+  const handleSelectNavigationPoint = (point) => {
+    if (selectedNavigationStep === 'start') {
+      handleSetStartPoint(point)
       return
     }
 
     if (selectedNavigationStep === 'waypoint') {
+      resetStartedNavigation()
       setWaypointList((currentWaypointList) => [
         ...currentWaypointList,
         point,
       ])
+      setSelectedNavigationStep(null)
+      return
     }
+
+    resetStartedNavigation()
+    setDestinationPoint(point)
+    setDestinationDetail(createMapDestinationDetail(point))
+    setIsDestinationDetailVisible(true)
+    setIsNavigationSetupOpen(true)
+    setSelectedNavigationStep(null)
   }
 
   const handleClearNavigation = () => {
@@ -699,8 +727,13 @@ function App() {
     setSelectedNavigationStep(null)
     setRouteDangerPosts([])
     setHasCheckedRouteDanger(false)
+    setIsNavigationSetupOpen(false)
     setIsNavigationStarted(false)
     setNavigationAlertMessage('')
+    setStartSearchQuery('')
+    setStartSearchResults([])
+    setStartSearchMessage('')
+    setIsStartSearchOpen(false)
   }
 
   const handleDeleteWaypoint = (waypointIndex) => {
@@ -799,6 +832,7 @@ function App() {
     }
 
     resetStartedNavigation()
+    setIsNavigationSetupOpen(false)
     setDestinationPoint({
       lat: destination.lat,
       lng: destination.lng,
@@ -815,13 +849,98 @@ function App() {
     setPlaceSearchMessage('')
   }
 
-  const handleStartNavigation = () => {
-    if (!startPoint || !destinationPoint) {
+  const handleSearchStartPlace = async (event) => {
+    event.preventDefault()
+    setIsStartSearchOpen(true)
+
+    const trimmedQuery = startSearchQuery.trim()
+
+    if (!trimmedQuery) {
+      setStartSearchResults([])
+      setStartSearchMessage('検索キーワードを入力してください。')
+      return
+    }
+
+    if (startSearchCache[trimmedQuery]) {
+      const cachedResults = startSearchCache[trimmedQuery]
+      setStartSearchResults(cachedResults)
+      setStartSearchMessage(
+        cachedResults.length > 0 ? '' : '候補が見つかりませんでした',
+      )
+      return
+    }
+
+    const searchParams = new URLSearchParams({
+      q: trimmedQuery,
+      format: 'jsonv2',
+      limit: '5',
+      countrycodes: 'jp',
+      'accept-language': 'ja',
+      addressdetails: '1',
+    })
+
+    setIsSearchingStart(true)
+    setStartSearchMessage('')
+
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?${searchParams.toString()}`,
+      )
+
+      if (!response.ok) {
+        throw new Error('Failed to search start place')
+      }
+
+      const results = await response.json()
+      setStartSearchCache((currentCache) => ({
+        ...currentCache,
+        [trimmedQuery]: results,
+      }))
+      setStartSearchResults(results)
+      setStartSearchMessage(
+        results.length > 0 ? '' : '候補が見つかりませんでした',
+      )
+    } catch (error) {
+      console.error(error)
+      setStartSearchResults([])
+      setStartSearchMessage(
+        '場所検索に失敗しました。時間をおいて再度お試しください。',
+      )
+    } finally {
+      setIsSearchingStart(false)
+    }
+  }
+
+  const handleSelectStartSearchResult = (result) => {
+    handleSetStartPoint({
+      lat: Number(result.lat),
+      lng: Number(result.lon),
+    })
+    setStartSearchResults([])
+    setStartSearchMessage('')
+  }
+
+  const handleSelectMapStartInput = () => {
+    setSelectedNavigationStep('start')
+    setIsStartSearchOpen(false)
+    setStartSearchMessage('地図をタップして出発地を選択してください。')
+  }
+
+  const handleStartRouteNavigation = () => {
+    if (!destinationPoint) {
+      setNavigationAlertMessage('目的地を設定してください。')
+      setSelectedNavigationStep('destination')
+      return
+    }
+
+    if (!startPoint) {
       setNavigationAlertMessage('出発地を設定してください。')
+      setSelectedNavigationStep('start')
       return
     }
 
     setNavigationAlertMessage('')
+    setSelectedNavigationStep(null)
     setIsNavigationStarted(true)
   }
 
@@ -841,12 +960,10 @@ function App() {
 
     navigator.geolocation.getCurrentPosition(
       (position) => {
-        resetStartedNavigation()
-        setStartPoint({
+        handleSetStartPoint({
           lat: position.coords.latitude,
           lng: position.coords.longitude,
         })
-        setNavigationAlertMessage('')
       },
       () => {
         setNavigationAlertMessage(currentLocationErrorMessage)
@@ -1054,66 +1171,136 @@ function App() {
                 )}
               </section>
 
-              <section
-                className="navigation-section navigation-action-bar"
-                aria-label="ナビゲーション設定バー"
-              >
-                <p className="route-mode-label">{routeModeLabel}</p>
-
-                <div
-                  className="option-grid navigation-step-grid"
-                  aria-label="ナビゲーション地点の入力対象"
+              {isNavigationSetupOpen && (
+                <section
+                  className="navigation-section navigation-action-bar"
+                  aria-label="ナビゲーション設定バー"
                 >
-                  <button
-                    className={`option-button navigation-step-button ${
-                      selectedNavigationStep === 'start' ? 'is-selected' : ''
-                    }`}
-                    type="button"
-                    aria-pressed={selectedNavigationStep === 'start'}
-                    onClick={() => setSelectedNavigationStep('start')}
+                  <p className="route-mode-label">{routeModeLabel}</p>
+
+                  <div
+                    className="option-grid navigation-step-grid"
+                    aria-label="ナビゲーション地点の入力対象"
                   >
-                    出発地を選択
-                  </button>
-                  <button
-                    className="option-button navigation-step-button navigation-current-location-button"
-                    type="button"
-                    onClick={handleUseCurrentLocationAsStart}
-                  >
-                    現在地を出発地にする
-                  </button>
-                  <button
-                    className={`option-button navigation-step-button ${
-                      selectedNavigationStep === 'destination'
-                        ? 'is-selected'
-                        : ''
-                    }`}
-                    type="button"
-                    aria-pressed={selectedNavigationStep === 'destination'}
-                    onClick={() => setSelectedNavigationStep('destination')}
-                  >
-                    目的地を選択
-                  </button>
-                  <button
-                    className={`option-button navigation-step-button ${
-                      selectedNavigationStep === 'waypoint'
-                        ? 'is-selected'
-                        : ''
-                    }`}
-                    type="button"
-                    aria-pressed={selectedNavigationStep === 'waypoint'}
-                    onClick={() => setSelectedNavigationStep('waypoint')}
-                  >
-                    経由地を追加
-                  </button>
-                  <button
-                    className="option-button navigation-step-button navigation-clear-button"
-                    type="button"
-                    onClick={handleClearNavigation}
-                  >
-                    クリア
-                  </button>
-                </div>
-              </section>
+                    <form
+                      className="start-search-form"
+                      onSubmit={handleSearchStartPlace}
+                    >
+                      <label>
+                        出発地
+                        <span className="place-search-input-row">
+                          <input
+                            type="search"
+                            value={startSearchQuery}
+                            onChange={(event) =>
+                              setStartSearchQuery(event.target.value)
+                            }
+                            onFocus={() => setIsStartSearchOpen(true)}
+                            placeholder="地名・施設名で検索"
+                          />
+                          <button type="submit" disabled={isSearchingStart}>
+                            {isSearchingStart ? '検索中...' : '検索'}
+                          </button>
+                        </span>
+                      </label>
+
+                      {isStartSearchOpen && (
+                        <div
+                          className="start-search-dropdown"
+                          aria-label="出発地候補"
+                        >
+                          <button
+                            className="start-search-dropdown-button"
+                            type="button"
+                            onClick={handleUseCurrentLocationAsStart}
+                          >
+                            <span>現在地を使用</span>
+                            <small>ブラウザの現在地を出発地にします</small>
+                          </button>
+                          <button
+                            className="start-search-dropdown-button"
+                            type="button"
+                            onClick={handleSelectMapStartInput}
+                          >
+                            <span>地図をタップして出発地を選択</span>
+                            <small>次にタップした地点を出発地にします</small>
+                          </button>
+
+                          {startSearchMessage && (
+                            <p className="place-search-message">
+                              {startSearchMessage}
+                            </p>
+                          )}
+
+                          {startSearchResults.length > 0 && (
+                            <div className="place-search-results">
+                              {startSearchResults.map((result) => {
+                                const { description, name } =
+                                  formatPlaceSearchResult(result)
+
+                                return (
+                                  <button
+                                    className="place-search-result-button"
+                                    key={result.place_id}
+                                    type="button"
+                                    onClick={() =>
+                                      handleSelectStartSearchResult(result)
+                                    }
+                                  >
+                                    <span>{name}</span>
+                                    <small>{description}</small>
+                                  </button>
+                                )
+                              })}
+                              <p className="place-search-attribution">
+                                Search results by OpenStreetMap Nominatim
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </form>
+                    <button
+                      className={`option-button navigation-step-button ${
+                        selectedNavigationStep === 'destination'
+                          ? 'is-selected'
+                          : ''
+                      }`}
+                      type="button"
+                      aria-pressed={selectedNavigationStep === 'destination'}
+                      onClick={() => setSelectedNavigationStep('destination')}
+                    >
+                      目的地を選択
+                    </button>
+                    <button
+                      className={`option-button navigation-step-button ${
+                        selectedNavigationStep === 'waypoint'
+                          ? 'is-selected'
+                          : ''
+                      }`}
+                      type="button"
+                      aria-pressed={selectedNavigationStep === 'waypoint'}
+                      onClick={() => setSelectedNavigationStep('waypoint')}
+                    >
+                      経由地を追加
+                    </button>
+                    <button
+                      className="option-button navigation-step-button navigation-clear-button"
+                      type="button"
+                      onClick={handleClearNavigation}
+                    >
+                      クリア
+                    </button>
+                    <button
+                      className="option-button navigation-step-button navigation-start-button"
+                      type="button"
+                      onClick={handleStartRouteNavigation}
+                    >
+                      ナビ開始
+                    </button>
+                  </div>
+                </section>
+              )}
 
               {navigationAlertMessage && (
                 <p className="navigation-alert">{navigationAlertMessage}</p>
@@ -1378,8 +1565,8 @@ function App() {
           </div>
 
           <div className="destination-detail-actions">
-            <button type="button" onClick={handleStartNavigation}>
-              ナビゲーションを開始
+            <button type="button" onClick={handleOpenNavigationSetup}>
+              ナビゲーション設定を開く
             </button>
             <button
               className="secondary-button"
