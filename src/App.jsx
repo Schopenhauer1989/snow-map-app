@@ -75,8 +75,15 @@ const targetIcons = {
   both: '両',
 }
 
+const passableReportDefaults = {
+  passableReportCount: 0,
+  passableReports: [],
+  autoResolved: false,
+}
+
 const snowReports = [
   {
+    ...passableReportDefaults,
     id: 1,
     title: '金沢駅西口 周辺道路',
     area: '金沢市',
@@ -90,6 +97,7 @@ const snowReports = [
     updatedAt: '2026-06-13T07:20:00+09:00',
   },
   {
+    ...passableReportDefaults,
     id: 2,
     title: '富山市 呉羽丘陵入口',
     area: '富山市',
@@ -103,6 +111,7 @@ const snowReports = [
     updatedAt: '2026-06-13T07:45:00+09:00',
   },
   {
+    ...passableReportDefaults,
     id: 3,
     title: '福井市 大和田交差点',
     area: '福井市',
@@ -116,6 +125,7 @@ const snowReports = [
     updatedAt: '2026-06-13T06:55:00+09:00',
   },
   {
+    ...passableReportDefaults,
     id: 4,
     title: '新潟市 中央区 学校町通',
     area: '新潟市',
@@ -129,6 +139,7 @@ const snowReports = [
     updatedAt: '2026-06-13T08:05:00+09:00',
   },
   {
+    ...passableReportDefaults,
     id: 5,
     title: '長岡市 宮内駅前',
     area: '長岡市',
@@ -142,6 +153,7 @@ const snowReports = [
     updatedAt: '2026-06-13T07:10:00+09:00',
   },
   {
+    ...passableReportDefaults,
     id: 6,
     title: '白山市 鶴来支所付近',
     area: '白山市',
@@ -212,6 +224,18 @@ const createNavigationIcon = ({ color, label, text }) =>
 
 const reportsCollection = collection(db, 'snowReports')
 const reportsQuery = query(reportsCollection, orderBy('updatedAt', 'desc'))
+
+const getMissingPassableReportFields = (report) =>
+  Object.fromEntries(
+    Object.entries(passableReportDefaults).filter(
+      ([fieldName]) => report[fieldName] === undefined,
+    ),
+  )
+
+const applyPassableReportDefaults = (report) => ({
+  ...passableReportDefaults,
+  ...report,
+})
 
 function MapClickHandler({ onSelect }) {
   useMapEvents({
@@ -484,6 +508,7 @@ function App() {
   const [dataError, setDataError] = useState('')
   const [loadingReports, setLoadingReports] = useState(true)
   const [editingReportId, setEditingReportId] = useState(null)
+  const [passableReportMessages, setPassableReportMessages] = useState({})
 
   const isPostMode = mode === 'post'
   const isNavigationMode = mode === 'navigation'
@@ -524,11 +549,26 @@ function App() {
           return
         }
 
+        snapshot.docs.forEach((reportDoc) => {
+          const missingFields = getMissingPassableReportFields(reportDoc.data())
+
+          if (Object.keys(missingFields).length > 0) {
+            updateDoc(doc(reportsCollection, reportDoc.id), missingFields).catch(
+              (error) => {
+                console.error(error)
+                setDataError('投稿データの更新に失敗しました。')
+              },
+            )
+          }
+        })
+
         setReports(
-          snapshot.docs.map((reportDoc) => ({
-            ...reportDoc.data(),
-            id: reportDoc.id,
-          })),
+          snapshot.docs.map((reportDoc) =>
+            applyPassableReportDefaults({
+              ...reportDoc.data(),
+              id: reportDoc.id,
+            }),
+          ),
         )
         setDataError('')
         setLoadingReports(false)
@@ -591,6 +631,7 @@ function App() {
 
     const newReportRef = doc(reportsCollection)
     const newReport = {
+      ...passableReportDefaults,
       id: newReportRef.id,
       title: trimmedTitle,
       area: '',
@@ -626,6 +667,59 @@ function App() {
       lng: report.lng,
     })
     setFormError('')
+  }
+
+  const handlePassableReport = (reportId) => {
+    const reportedAt = formatTokyoIso()
+    const targetReport = reports.find((report) => report.id === reportId)
+    const nextPassableReportCount =
+      (targetReport?.passableReportCount ?? 0) + 1
+    const shouldAutoResolve =
+      targetReport?.status !== 'cleared' && nextPassableReportCount >= 3
+
+    setReports((currentReports) =>
+      currentReports.map((report) => {
+        if (report.id !== reportId) {
+          return report
+        }
+
+        const passableReports = Array.isArray(report.passableReports)
+          ? report.passableReports
+          : []
+        const passableReportCount = (report.passableReportCount ?? 0) + 1
+        const isAutoResolved =
+          report.status !== 'cleared' && passableReportCount >= 3
+
+        return {
+          ...report,
+          status: isAutoResolved ? 'cleared' : report.status,
+          isResolved: isAutoResolved ? true : report.isResolved,
+          autoResolved: isAutoResolved ? true : report.autoResolved,
+          passableReportCount,
+          passableReports: [...passableReports, reportedAt],
+          updatedAt: isAutoResolved ? reportedAt : report.updatedAt,
+        }
+      }),
+    )
+
+    if (shouldAutoResolve) {
+      setRouteDangerPosts((currentRouteDangerPosts) =>
+        currentRouteDangerPosts.filter((report) => report.id !== reportId),
+      )
+    }
+
+    setPassableReportMessages((currentMessages) => ({
+      ...currentMessages,
+      [reportId]: '通行可能報告を送信しました',
+    }))
+
+    window.setTimeout(() => {
+      setPassableReportMessages((currentMessages) => {
+        const remainingMessages = { ...currentMessages }
+        delete remainingMessages[reportId]
+        return remainingMessages
+      })
+    }, 2500)
   }
 
   const handleDeleteReport = async (reportId) => {
@@ -1505,25 +1599,52 @@ function App() {
                         <dt>対象</dt>
                         <dd>{targetLabels[report.target]}</dd>
                       </div>
+                      <div>
+                        <dt>通行可能報告数</dt>
+                        <dd>{report.passableReportCount ?? 0}件</dd>
+                      </div>
                     </dl>
                     <time dateTime={report.updatedAt}>
                       {formatUpdatedAt(report.updatedAt)}
                     </time>
-                    {isPostMode && (
+                    {report.autoResolved && (
+                      <p className="auto-resolved-message">
+                        3件以上の通行可能報告により、自動的に通行可能になりました
+                      </p>
+                    )}
+                    {passableReportMessages[report.id] && (
+                      <p className="passable-report-message">
+                        {passableReportMessages[report.id]}
+                      </p>
+                    )}
+                    {(report.status !== 'cleared' || isPostMode) && (
                       <div className="popup-actions">
-                        <button
-                          type="button"
-                          onClick={() => handleEditReport(report)}
-                        >
-                          編集
-                        </button>
-                        <button
-                          className="danger-button"
-                          type="button"
-                          onClick={() => handleDeleteReport(report.id)}
-                        >
-                          削除
-                        </button>
+                        {report.status !== 'cleared' && (
+                          <button
+                            className="passable-report-button"
+                            type="button"
+                            onClick={() => handlePassableReport(report.id)}
+                          >
+                            通行可能報告
+                          </button>
+                        )}
+                        {isPostMode && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => handleEditReport(report)}
+                            >
+                              編集
+                            </button>
+                            <button
+                              className="danger-button"
+                              type="button"
+                              onClick={() => handleDeleteReport(report.id)}
+                            >
+                              削除
+                            </button>
+                          </>
+                        )}
                       </div>
                     )}
                   </article>
